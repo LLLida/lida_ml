@@ -1,0 +1,261 @@
+/*
+  My small machine learning framework.
+ */
+#include "lida_ml.h"
+
+#include "string.h"
+
+#define LIDA_GC_MASK 0xffff
+
+#define ARR_SIZE(arr) sizeof(arr) / sizeof(arr[0])
+
+struct Dim {
+  uint32_t num;
+  uint32_t pitch;
+  uint32_t index;
+  uint32_t _padding;
+};
+
+struct lida_Tensor {
+  lida_Format format;
+  uint32_t rank;
+  struct Dim dims[LIDA_MAX_DIMENSIONALITY];
+  void* cpu_mem;
+};
+
+#define tdim(tensor, dim) ((tensor)->dims[(tensor)->dims[dim].index])
+
+struct Tensor_Pool {
+  struct lida_Tensor data[1024];
+  uint32_t num_free;
+  uint32_t free_index;
+  struct Tensor_Pool* next;
+};
+
+static const struct lida_ML* g_ml;
+static struct Tensor_Pool* g_pools = NULL;
+
+#define LOG_DEBUG(...) g_ml->log(0, __VA_ARGS__)
+#define LOG_INFO(...)  g_ml->log(1, __VA_ARGS__)
+#define LOG_WARN(...)  g_ml->log(2, __VA_ARGS__)
+#define LOG_ERROR(...) g_ml->log(3, __VA_ARGS__)
+
+
+/// static functions
+
+static void
+add_tensor_pool()
+{
+  struct Tensor_Pool* pool = g_ml->alloc(sizeof(struct Tensor_Pool));
+  pool->num_free = ARR_SIZE(pool->data);
+  pool->free_index = 0;
+  pool->next = g_pools;
+  for (size_t i = 0; i < ARR_SIZE(pool->data); i++) {
+    uint32_t* index = (uint32_t*)&pool->data[i];
+    *index = i+1;
+  }
+
+  g_pools = pool;
+}
+
+static uint32_t
+format_num_bytes(lida_Format format)
+{
+  switch (format)
+    {
+    case LIDA_FORMAT_U16:
+    case LIDA_FORMAT_I16:
+    case LIDA_FORMAT_F16:
+      return 2;
+    case LIDA_FORMAT_U32:
+    case LIDA_FORMAT_I32:
+    case LIDA_FORMAT_F32:
+      return 4;
+    default:
+      // error maybe?
+      return 0;
+    }
+}
+
+static struct lida_Tensor*
+allocate_tensor()
+{
+  // find suitable pool
+  struct Tensor_Pool* pool = g_pools;
+  while (pool != NULL && pool->num_free > 0) {
+    pool = pool->next;
+  }
+  if (pool == NULL || pool->num_free == 0) {
+    add_tensor_pool();
+    pool = g_pools;
+  }
+
+  // take free object
+  struct lida_Tensor* ret = &pool->data[pool->free_index];
+  uint32_t* index = (uint32_t*)ret;
+  pool->free_index = *index;
+  pool->num_free--;
+  return ret;
+}
+
+static uint32_t
+tensor_offset(const struct lida_Tensor* tensor, uint32_t indices[])
+{
+  uint32_t offset = 0;
+  for (int i = (int)tensor->rank-1; i >= 0; i--) {
+    offset *= tensor->dims[i].pitch;
+    offset += indices[tensor->dims[i].index];
+  }
+  return offset * format_num_bytes(tensor->format);
+}
+
+
+/// library functions
+
+void
+lida_ml_init(const struct lida_ML* ml)
+{
+  g_ml = ml;
+}
+
+void
+lida_ml_done()
+{
+  // TODO: free all resources
+}
+
+struct lida_Tensor*
+lida_tensor_create(uint32_t dims[], int rank, lida_Format format)
+{
+  if (rank == 0) {
+    LOG_ERROR("can't create a tensor with rank = 0");
+    return NULL;
+  }
+  if (rank > LIDA_MAX_DIMENSIONALITY) {
+    LOG_ERROR("can't create a tensor with rank higher than %d", LIDA_MAX_DIMENSIONALITY);
+    return NULL;
+  }
+
+  struct lida_Tensor* ret = allocate_tensor();
+  ret->format = format;
+  ret->rank = rank;
+  uint32_t size = 1;
+  for (int i = 0; i < rank; i++) {
+    ret->dims[i] = (struct Dim) {
+      .num = dims[i],
+      .pitch = dims[i],
+      .index = i
+    };
+    size *= dims[i];
+  }
+  ret->cpu_mem = g_ml->alloc(size * format_num_bytes(format));
+
+  return ret;
+}
+
+void
+lida_tensor_get_dims(struct lida_Tensor* tensor, uint32_t* dims, int* rank)
+{
+  if (dims) {
+    for (uint32_t i = 0; i < tensor->rank; i++) {
+      dims[i] = tdim(tensor, i).num;
+    }
+  }
+  if (rank) {
+    *rank = (int)tensor->rank;
+  }
+}
+
+void*
+lida_tensor_get(struct lida_Tensor* tensor, uint32_t indices[], int num_indices)
+{
+  if (num_indices != (int)tensor->rank) {
+    LOG_ERROR("num_indices(which is %d) doesn't match tensor's rank(which is %u)",
+	      num_indices, tensor->rank);
+    return NULL;
+  }
+  for (int i = 0; i < num_indices; i++) {
+    if (indices[i] >= tdim(tensor, i).num) {
+      LOG_ERROR("index out of bounds: indices[%u] > %u", indices[i], tensor->dims[i].num);
+      return NULL;
+    }
+  }
+
+  uint32_t offset = tensor_offset(tensor, indices);
+  uint8_t* bytes = tensor->cpu_mem;
+  return bytes + offset;
+}
+
+void
+lida_tensor_fill_zeros(struct lida_Tensor* tensor)
+{
+  uint32_t indices[LIDA_MAX_DIMENSIONALITY] = {0};
+  uint32_t bytes_per_elem = format_num_bytes(tensor->format);
+  uint8_t* bytes = tensor->cpu_mem;
+  // NOTE: we don't use the tdim macro in here because the order of
+  // dimensions doesn't matter
+
+  // TODO: find max dim of packed sub-tensor in memory
+  while (indices[tensor->rank-1] < tensor->dims[tensor->rank-1].num) {
+    uint32_t offset = 0;
+    for (int i = tensor->rank-1; i > 0; i--) {
+      offset *= tensor->dims[i].pitch;
+      offset += indices[i];
+    }
+    offset *= tensor->dims[0].pitch;
+    memset(&bytes[offset * bytes_per_elem], 0, bytes_per_elem * tensor->dims[0].num);
+
+    for (uint32_t i = 1; i < tensor->rank; i++) {
+      indices[i]++;
+      if (indices[i] == tensor->dims[i].num && i < tensor->rank-1) {
+	indices[i] = 0;
+	break;
+      }
+    }
+  }
+}
+
+struct lida_Tensor*
+lida_tensor_transpose(struct lida_Tensor* tensor, uint32_t dims[], int rank)
+{
+  if ((int)tensor->rank != rank) {
+    LOG_ERROR("array of invalid size(got %d) passed: expected %u", rank, tensor->rank);
+    return NULL;
+  }
+  // TODO: check for duplicates in dims
+
+  struct lida_Tensor* ret = allocate_tensor();
+  memcpy(ret, tensor, sizeof(struct lida_Tensor));
+  for (int i = 0; i < rank; i++) {
+    ret->dims[tensor->dims[i].index].index = dims[i];
+  }
+  return ret;
+}
+
+struct lida_Tensor*
+lida_tensor_slice(struct lida_Tensor* tensor, uint32_t left[], uint32_t right[], int rank)
+{
+  if ((int)tensor->rank != rank) {
+    LOG_ERROR("array of invalid size(got %d) passed: expected %u", rank, tensor->rank);
+    return NULL;
+  }
+  for (int i = 0; i < rank; i++) {
+    if (left[i] >= right[i]) {
+      LOG_ERROR("slice in dimension [%d] has size non-positive size", i);
+      return NULL;
+    }
+    if (right[i] > tdim(tensor, i).num) {
+      LOG_ERROR("slice in dimension [%d] is out of bounds (it should be < %u)",
+		i, tdim(tensor, i).num);
+      return NULL;
+    }
+  }
+
+  struct lida_Tensor* ret = allocate_tensor();
+  memcpy(ret, tensor, sizeof(struct lida_Tensor));
+  ret->cpu_mem = (uint8_t*)ret->cpu_mem + tensor_offset(tensor, left);
+  for (int i = 0; i < rank; i++) {
+    tdim(ret, i).num = right[i] - left[i];
+  }
+  return ret;
+}
