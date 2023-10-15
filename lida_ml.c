@@ -99,6 +99,34 @@ allocate_tensor()
 }
 
 static uint32_t
+seq_rank(const struct lida_Tensor* tensor)
+{
+  uint32_t r = 1;
+  for (uint32_t i = 0; i < tensor->rank-1; i++) {
+    if (tensor->dims[i].num == tensor->dims[i].pitch) {
+      r++;
+    } else {
+      break;
+    }
+  }
+  return r;
+}
+
+static uint32_t
+seq_full_rank(const struct lida_Tensor* tensor)
+{
+  uint32_t r = 0;
+  for (uint32_t i = 0; i < tensor->rank; i++) {
+    if (tensor->dims[i].index == i && tensor->dims[i].num == tensor->dims[i].pitch) {
+      r++;
+    } else {
+      break;
+    }
+  }
+  return r;
+}
+
+static uint32_t
 tensor_offset(const struct lida_Tensor* tensor, uint32_t indices[])
 {
   uint32_t offset = 0;
@@ -107,6 +135,14 @@ tensor_offset(const struct lida_Tensor* tensor, uint32_t indices[])
     offset += indices[tensor->dims[i].index];
   }
   return offset * format_num_bytes(tensor->format);
+}
+
+static struct lida_Tensor*
+tensor_copy(struct lida_Tensor* tensor)
+{
+  struct lida_Tensor* ret = allocate_tensor();
+  memcpy(ret, tensor, sizeof(struct lida_Tensor));
+  return ret;
 }
 
 
@@ -154,6 +190,12 @@ lida_tensor_create(uint32_t dims[], int rank, lida_Format format)
 }
 
 void
+lida_tensor_destroy(struct lida_Tensor* tensor)
+{
+  // TODO: destroy
+}
+
+void
 lida_tensor_get_dims(struct lida_Tensor* tensor, uint32_t* dims, int* rank)
 {
   if (dims) {
@@ -186,6 +228,16 @@ lida_tensor_get(struct lida_Tensor* tensor, uint32_t indices[], int num_indices)
   return bytes + offset;
 }
 
+uint32_t
+lida_tensor_size(const struct lida_Tensor* tensor)
+{
+  uint32_t s = 1;
+  for (uint32_t i = 0; i < tensor->rank; i++) {
+    s *= tensor->dims[i].num;
+  }
+  return s;
+}
+
 void
 lida_tensor_fill_zeros(struct lida_Tensor* tensor)
 {
@@ -195,17 +247,26 @@ lida_tensor_fill_zeros(struct lida_Tensor* tensor)
   // NOTE: we don't use the tdim macro in here because the order of
   // dimensions doesn't matter
 
-  // TODO: find max dim of packed sub-tensor in memory
+  uint32_t seq = seq_rank(tensor);
+  uint32_t mag = bytes_per_elem;
+  for (uint32_t i = 0; i < seq; i++) {
+    mag *= tensor->dims[i].pitch;
+  }
+  if (seq == tensor->rank) {
+    memset(bytes, 0, mag);
+    return;
+  }
+
   while (indices[tensor->rank-1] < tensor->dims[tensor->rank-1].num) {
     uint32_t offset = 0;
-    for (int i = tensor->rank-1; i > 0; i--) {
+    for (uint32_t i = tensor->rank-1; i >= seq; i--) {
       offset *= tensor->dims[i].pitch;
       offset += indices[i];
     }
-    offset *= tensor->dims[0].pitch;
-    memset(&bytes[offset * bytes_per_elem], 0, bytes_per_elem * tensor->dims[0].num);
+    offset *= mag;
+    memset(&bytes[offset], 0, mag);
 
-    for (uint32_t i = 1; i < tensor->rank; i++) {
+    for (uint32_t i = seq; i < tensor->rank; i++) {
       indices[i]++;
       if (indices[i] == tensor->dims[i].num && i < tensor->rank-1) {
 	indices[i] = 0;
@@ -224,8 +285,7 @@ lida_tensor_transpose(struct lida_Tensor* tensor, uint32_t dims[], int rank)
   }
   // TODO: check for duplicates in dims
 
-  struct lida_Tensor* ret = allocate_tensor();
-  memcpy(ret, tensor, sizeof(struct lida_Tensor));
+  struct lida_Tensor* ret = tensor_copy(tensor);
   for (int i = 0; i < rank; i++) {
     ret->dims[tensor->dims[i].index].index = dims[i];
   }
@@ -251,11 +311,99 @@ lida_tensor_slice(struct lida_Tensor* tensor, uint32_t left[], uint32_t right[],
     }
   }
 
-  struct lida_Tensor* ret = allocate_tensor();
-  memcpy(ret, tensor, sizeof(struct lida_Tensor));
+  struct lida_Tensor* ret = tensor_copy(tensor);
   ret->cpu_mem = (uint8_t*)ret->cpu_mem + tensor_offset(tensor, left);
   for (int i = 0; i < rank; i++) {
     tdim(ret, i).num = right[i] - left[i];
+  }
+  return ret;
+}
+
+struct lida_Tensor*
+lida_tensor_deep_copy(struct lida_Tensor* tensor)
+{
+  struct lida_Tensor* ret = tensor_copy(tensor);
+  uint32_t bytes_per_elem = format_num_bytes(tensor->format);
+
+  uint32_t s = bytes_per_elem * lida_tensor_size(tensor);
+  for (uint32_t i = 0; i < tensor->rank; i++) {
+    ret->dims[i] = (struct Dim) {
+      .index	= i,
+      .num	= tdim(tensor, i).num,
+      .pitch	= tdim(tensor, i).num
+    };
+  }
+  ret->cpu_mem = g_ml->alloc(s);
+
+  uint32_t seq = seq_full_rank(tensor);
+  uint32_t mag = bytes_per_elem;
+  for (uint32_t i = 0; i < seq; i++) {
+    mag *= tdim(tensor, i).pitch;
+  }
+  if (seq == tensor->rank) {
+    memcpy(ret->cpu_mem, tensor->cpu_mem, s);
+  } else {
+    uint32_t indices[LIDA_MAX_DIMENSIONALITY] = {0};
+    uint8_t* dst = ret->cpu_mem;
+    uint8_t* src = tensor->cpu_mem;
+    while (indices[tensor->rank-1] < tdim(tensor, tensor->rank-1).num) {
+      uint32_t o1 = 0, o2 = 0;
+      for (uint32_t ii = tensor->rank; ii > seq; ii--) {
+	uint32_t i = ii-1;
+	o1 *= tensor->dims[i].pitch;
+	o1 += indices[tensor->dims[i].index];
+	o2 *= ret->dims[i].pitch;
+	o2 += indices[i];
+      }
+      o1 *= mag;
+      o2 *= mag;
+      memcpy(&dst[o2], &src[o1], mag);
+
+      for (uint32_t i = seq; i < tensor->rank; i++) {
+	indices[i]++;
+	if (indices[i] == tdim(tensor, i).num && i < tensor->rank-1) {
+	  indices[i] = 0;
+	} else {
+	  break;
+	}
+      }
+    }
+  }
+
+  return ret;
+}
+
+struct lida_Tensor*
+lida_tensor_reshape(struct lida_Tensor* tensor, uint32_t dims[], int rank)
+{
+  if (rank > LIDA_MAX_DIMENSIONALITY) {
+    LOG_ERROR("can't create a tensor with rank higher than %d", LIDA_MAX_DIMENSIONALITY);
+    return NULL;
+  }
+  uint32_t s = 1;
+  for (int i = 0; i < rank; i++) {
+    s *= dims[i];
+  }
+  if (s != lida_tensor_size(tensor)) {
+    LOG_ERROR("dimensionality mismatch(%u != %u)", s, lida_tensor_size(tensor));
+    return NULL;
+  }
+
+  struct lida_Tensor* ret;
+
+  if (tensor->rank != seq_full_rank(tensor)) {
+    ret = lida_tensor_deep_copy(tensor);
+  } else {
+    ret = tensor_copy(tensor);
+  }
+
+  ret->rank = rank;
+  for (int i = 0; i < rank; i++) {
+    ret->dims[i] = (struct Dim) {
+      .num = dims[i],
+      .pitch = dims[i],
+      .index = i
+    };
   }
   return ret;
 }

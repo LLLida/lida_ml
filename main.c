@@ -15,8 +15,9 @@ log_func(int sev, const char* fmt, ...)
   printf("\n");
 }
 
-void print_tensor(struct lida_Tensor* tensor)
+void print_tensor_(struct lida_Tensor* tensor, const char* str)
 {
+  printf("====== %s\n", str);
   uint32_t dims[2];
   lida_tensor_get_dims(tensor, dims, NULL);
 
@@ -29,8 +30,8 @@ void print_tensor(struct lida_Tensor* tensor)
       printf("%f%c", *val, " \n"[j == dims[0]-1]);
     }
   }
-  printf("======\n");
 }
+#define print_tensor(tensor) print_tensor_(tensor, #tensor)
 
 void print_tensor_dim(struct lida_Tensor* tensor)
 {
@@ -80,6 +81,17 @@ int main()
   struct lida_Tensor* t3 = lida_tensor_slice(t2, start, stop, 2);
   print_tensor_dim(t3);
   print_tensor(t3);
+
+  struct lida_Tensor* t4 = lida_tensor_deep_copy(t3);
+  print_tensor(t4);
+  // lida_tensor_fill_zeros(t3);
+  lida_tensor_fill_zeros(t4);
+  print_tensor(t1);
+  print_tensor(t2);
+
+  uint32_t newdims[2] = { 6, 2 };
+  struct lida_Tensor* t5 = lida_tensor_reshape(t2, newdims, 2);
+  print_tensor(t5);
 
   lida_ml_done();
   return 0;
