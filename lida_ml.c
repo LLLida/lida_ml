@@ -196,7 +196,7 @@ lida_tensor_destroy(struct lida_Tensor* tensor)
 }
 
 void
-lida_tensor_get_dims(struct lida_Tensor* tensor, uint32_t* dims, int* rank)
+lida_tensor_get_dims(const struct lida_Tensor* tensor, uint32_t* dims, int* rank)
 {
   if (dims) {
     for (uint32_t i = 0; i < tensor->rank; i++) {

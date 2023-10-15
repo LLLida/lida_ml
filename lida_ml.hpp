@@ -36,13 +36,13 @@ namespace lida {
     }
 
     [[nodiscard]]
-    int rank() LIDA_ML_NOEXCEPT {
+    int rank() const LIDA_ML_NOEXCEPT {
       int r;
       lida_tensor_get_dims(raw, NULL, &r);
       return r;
     }
 
-    void dims(std::span<uint32_t> dims) {
+    void dims(std::span<uint32_t> dims) const {
       if (dims.size() != rank()) {
 	throw std::invalid_argument("lida::Tensor::dims: dims has invalid size");
       }
@@ -51,6 +51,11 @@ namespace lida {
 
     [[nodiscard]]
     void* get(std::span<uint32_t> indices) LIDA_ML_NOEXCEPT {
+      return lida_tensor_get(raw, indices.data(), indices.size());
+    }
+
+    [[nodiscard]]
+    const void* get(std::span<uint32_t> indices) const LIDA_ML_NOEXCEPT {
       return lida_tensor_get(raw, indices.data(), indices.size());
     }
 

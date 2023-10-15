@@ -2,7 +2,7 @@
 ;;; For more information see (info "(emacs) Directory Variables")
 
 ((c-mode . ((eval . (c-set-offset 'inextern-lang 0))
-            (c-basic-offset . 2)
-            (c-doc-comment-style . 'doxygen)))
- (nil . ((compile-command . "make -j2")))
+	    (c-basic-offset . 2)
+	    (c-doc-comment-style . 'doxygen)))
+ (nil . ((compile-command . "cmake --build build")))
  (compilation . ((save-buffers-dont-kill . t))))
