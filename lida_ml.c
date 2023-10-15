@@ -458,6 +458,12 @@ lida_tensor_transpose(struct lida_Tensor* tensor, const uint32_t dims[], int ran
     LOG_ERROR("array of invalid size(got %d) passed: expected %u", rank, tensor->rank);
     return NULL;
   }
+  for (int i = 0; i < rank; i++) {
+    if (dims[i] >= rank) {
+      LOG_ERROR("dims out of bounds: %u >= %d", dims[i], rank);
+      return NULL;
+    }
+  }
   // TODO: check for duplicates in dims
 
   struct lida_Tensor* ret = tensor_copy(tensor);
@@ -497,29 +503,17 @@ lida_tensor_slice(struct lida_Tensor* tensor, const uint32_t left[], const uint3
 struct lida_Tensor*
 lida_tensor_deep_copy(struct lida_Tensor* tensor)
 {
-  struct lida_Tensor* ret = tensor_copy(tensor);
-  if (tensor->alloc)
-    tensor->alloc->refs--;		// tensor_copy increments refs, we don't need that
-  uint32_t bytes_per_elem = format_num_bytes(tensor->format);
-
-  uint32_t s = bytes_per_elem * lida_tensor_size(tensor);
-  for (uint32_t i = 0; i < tensor->rank; i++) {
-    ret->dims[i] = (struct Dim) {
-      .index	= i,
-      .num	= tdim(tensor, i).num,
-      .pitch	= tdim(tensor, i).num
-    };
-  }
-  ret->alloc = do_allocation(s);
-  ret->cpu_mem = ret->alloc->ptr;
+  uint32_t dims[LIDA_MAX_DIMENSIONALITY];
+  lida_tensor_get_dims(tensor, dims, NULL);
+  struct lida_Tensor* ret = lida_tensor_create(dims, tensor->rank, tensor->format);
 
   uint32_t seq = seq_full_rank(tensor);
-  uint32_t mag = bytes_per_elem;
+  uint32_t mag = format_num_bytes(tensor->format);
   for (uint32_t i = 0; i < seq; i++) {
     mag *= tdim(tensor, i).pitch;
   }
   if (seq == tensor->rank) {
-    memcpy(ret->cpu_mem, tensor->cpu_mem, s);
+    memcpy(ret->cpu_mem, tensor->cpu_mem, lida_tensor_size(ret) * format_num_bytes(tensor->format));
   } else {
     uint32_t indices[LIDA_MAX_DIMENSIONALITY] = {0};
     uint8_t* dst = ret->cpu_mem;
