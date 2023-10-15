@@ -93,5 +93,15 @@ int main()
   lida::Tensor t5 = t2.reshape(newdims);
   print_tensor(t5);
 
+  float raw_matrix[] = {
+    1.0,  2.0,  3.0,  4.0, 5.0,
+    6.0,  7.0,  8.0,  9.0, 10.0,
+    11.0, 12.0, 13.0, 14.0, 15.0,
+    16.0, 17.0, 18.0, 19.0, 20.0,
+  };
+  uint32_t t6_dims[2] = { 5, 4 };
+  auto t6 = lida::Tensor(std::span{raw_matrix}, t6_dims).transpose(tdims);
+  print_tensor(t6);
+
   return 0;
 }

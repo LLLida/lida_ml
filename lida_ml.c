@@ -26,6 +26,7 @@ struct lida_Tensor {
   uint32_t rank;
   struct Dim dims[LIDA_MAX_DIMENSIONALITY];
   void* cpu_mem;
+  // alloc == NULL means cpu_mem points to external memory
   struct Allocation* alloc;
 };
 
@@ -253,7 +254,8 @@ tensor_copy(struct lida_Tensor* tensor)
 {
   struct lida_Tensor* ret = allocate_tensor();
   memcpy(ret, tensor, sizeof(struct lida_Tensor));
-  tensor->alloc->refs++;
+  if (tensor->alloc)
+    tensor->alloc->refs++;
   return ret;
 }
 
@@ -289,7 +291,7 @@ lida_ml_done()
 }
 
 struct lida_Tensor*
-lida_tensor_create(uint32_t dims[], int rank, lida_Format format)
+lida_tensor_create(const uint32_t dims[], int rank, lida_Format format)
 {
   if (rank == 0) {
     LOG_ERROR("can't create a tensor with rank = 0");
@@ -321,12 +323,51 @@ lida_tensor_create(uint32_t dims[], int rank, lida_Format format)
 void
 lida_tensor_destroy(struct lida_Tensor* tensor)
 {
-  if (tensor->alloc->refs == 1) {
-    free_allocation(tensor->alloc);
-  } else {
-    tensor->alloc->refs--;
+  if (tensor->alloc) {
+    if (tensor->alloc->refs == 1) {
+      free_allocation(tensor->alloc);
+    } else {
+      tensor->alloc->refs--;
+    }
   }
   release_tensor(tensor);
+}
+
+struct lida_Tensor*
+lida_tensor_create_from_memory(void* memory, uint32_t bytes, const uint32_t dims[], int rank, lida_Format format)
+{
+  if (rank == 0) {
+    LOG_ERROR("can't create a tensor with rank = 0");
+    return NULL;
+  }
+  if (rank > LIDA_MAX_DIMENSIONALITY) {
+    LOG_ERROR("can't create a tensor with rank higher than %d", LIDA_MAX_DIMENSIONALITY);
+    return NULL;
+  }
+  uint32_t s = format_num_bytes(format);
+  for (int i = 0; i < rank; i++) {
+    s *= dims[i];
+  }
+  if (bytes != s) {
+    LOG_ERROR("bytes and dims mismatch(%u != %u)", bytes, s);
+    return NULL;
+  }
+  struct lida_Tensor* ret = allocate_tensor();
+  ret->format = format;
+  ret->rank = rank;
+  uint32_t size = 1;
+  for (int i = 0; i < rank; i++) {
+    ret->dims[i] = (struct Dim) {
+      .num = dims[i],
+      .pitch = dims[i],
+      .index = i
+    };
+    size *= dims[i];
+  }
+  ret->alloc = NULL;
+  ret->cpu_mem = memory;
+
+  return ret;
 }
 
 void
@@ -457,7 +498,8 @@ struct lida_Tensor*
 lida_tensor_deep_copy(struct lida_Tensor* tensor)
 {
   struct lida_Tensor* ret = tensor_copy(tensor);
-  ret->alloc->refs--;		// tensor_copy increments refs, we don't need that
+  if (tensor->alloc)
+    tensor->alloc->refs--;		// tensor_copy increments refs, we don't need that
   uint32_t bytes_per_elem = format_num_bytes(tensor->format);
 
   uint32_t s = bytes_per_elem * lida_tensor_size(tensor);

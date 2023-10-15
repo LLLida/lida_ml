@@ -36,6 +36,19 @@ namespace lida {
 
   using Format = lida_Format;
 
+  template<typename T>
+  static Format format() LIDA_ML_NOEXCEPT {
+    if constexpr (std::is_same_v<T, float>) {
+      return LIDA_FORMAT_F32;
+    } else if constexpr (std::is_same_v<T, int32_t>) {
+      return LIDA_FORMAT_I32;
+    } else if constexpr (std::is_same_v<T, uint32_t>) {
+      return LIDA_FORMAT_U32;
+    }
+    // TODO: support for other formats
+    return LIDA_FORMAT_MASK;
+  }
+
   class Tensor {
 
     struct lida_Tensor* raw;
@@ -63,6 +76,11 @@ namespace lida {
 
     Tensor(std::span<uint32_t> dims, Format format) LIDA_ML_NOEXCEPT {
       raw = lida_tensor_create(dims.data(), dims.size(), format);
+    }
+
+    template<typename T, std::size_t E>
+    Tensor(std::span<T, E> external, std::span<uint32_t> dims) LIDA_ML_NOEXCEPT {
+      raw = lida_tensor_create_from_memory(external.data(), external.size_bytes(), dims.data(), dims.size(), format<T>());
     }
 
     Tensor(const Tensor& other) = delete;

@@ -34,8 +34,9 @@ struct lida_Tensor;
 
 void lida_ml_init(const struct lida_ML* ml);
 void lida_ml_done();
-struct lida_Tensor* lida_tensor_create(uint32_t dims[], int rank, lida_Format format);
+struct lida_Tensor* lida_tensor_create(const uint32_t dims[], int rank, lida_Format format);
 void lida_tensor_destroy(struct lida_Tensor* tensor);
+struct lida_Tensor* lida_tensor_create_from_memory(void* memory, uint32_t bytes, const uint32_t dims[], int rank, lida_Format format);
 /* dims or rank can be null */
 void lida_tensor_get_dims(const struct lida_Tensor* tensor, uint32_t* dims, int* rank);
 void* lida_tensor_get(struct lida_Tensor* tensor, const uint32_t indices[], int num_indices);
