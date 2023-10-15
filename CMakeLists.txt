@@ -22,6 +22,15 @@ target_compile_options(lida_ml PRIVATE
   $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall -Wextra -Wpedantic -Wno-unused-function> # g++ or clang
 )
 
+set(ENABLE_ASAN 1)
+
+if (ENABLE_ASAN)
+  target_compile_options(lida_ml PUBLIC
+    -fsanitize=address -fno-omit-frame-pointer)
+  target_link_options(lida_ml PUBLIC
+    -fsanitize=address -fno-omit-frame-pointer -lrt)
+endif ()
+
 option(LIDA_ML_BUILD_SAMPLES "Enable building of samples." OFF)
 
 if (${LIDA_ML_BUILD_SAMPLES})

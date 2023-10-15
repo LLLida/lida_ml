@@ -49,12 +49,11 @@ void print_tensor_dim(const lida::Tensor& tensor)
 
 int main()
 {
-  auto a = (struct lida_ML) {
+  auto ml_lib = lida::ML_Library::init((struct lida_ML) {
       .alloc   = malloc,
       .dealloc = free,
       .log     = log_func
-  };
-  lida_ml_init(&a);
+  });
 
   uint32_t dims[2] = { 4, 3 };
   lida::Tensor t1 {dims, LIDA_FORMAT_F32};
@@ -94,6 +93,5 @@ int main()
   lida::Tensor t5 = t2.reshape(newdims);
   print_tensor(t5);
 
-  lida_ml_done();
   return 0;
 }
