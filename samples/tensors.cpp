@@ -1,4 +1,4 @@
-#include "lida_ml.h"
+#include "lida_ml.hpp"
 
 #include "stdlib.h"
 #include "stdarg.h"
@@ -26,7 +26,7 @@ void print_tensor_(struct lida_Tensor* tensor, const char* str)
     for (uint32_t j = 0; j < dims[0]; j++) {
       indices[0] = j;
       indices[1] = i;
-      float* val = lida_tensor_get(tensor, indices, 2);
+      float* val = (float*)lida_tensor_get(tensor, indices, 2);
       printf("%f%c", *val, " \n"[j == dims[0]-1]);
     }
   }
@@ -49,11 +49,12 @@ void print_tensor_dim(struct lida_Tensor* tensor)
 
 int main()
 {
-  lida_ml_init(&(struct lida_ML) {
+  auto a = (struct lida_ML) {
       .alloc   = malloc,
       .dealloc = free,
       .log     = log_func
-    });
+  };
+  lida_ml_init(&a);
 
   uint32_t dims[2] = { 4, 3 };
   struct lida_Tensor* t1 = lida_tensor_create(dims, 2, LIDA_FORMAT_F32);
@@ -64,7 +65,7 @@ int main()
   print_tensor(t1);
   {
     uint32_t indices[2] = {0};
-    float* fst = lida_tensor_get(t1, indices, 2);
+    float* fst = (float*)lida_tensor_get(t1, indices, 2);
     for (uint32_t i = 0; i < dims[0]*dims[1]; i++)
       fst[i] = (float)(i*i);
   }
