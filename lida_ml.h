@@ -37,6 +37,7 @@ void lida_ml_done();
 struct lida_Tensor* lida_tensor_create(const uint32_t dims[], int rank, lida_Format format);
 void lida_tensor_destroy(struct lida_Tensor* tensor);
 struct lida_Tensor* lida_tensor_create_from_memory(void* memory, uint32_t bytes, const uint32_t dims[], int rank, lida_Format format);
+lida_Format lida_tensor_get_format(const struct lida_Tensor* tensor);
 /* dims or rank can be null */
 void lida_tensor_get_dims(const struct lida_Tensor* tensor, uint32_t* dims, int* rank);
 /* O(1) indexing operation */
@@ -44,6 +45,7 @@ void* lida_tensor_get(struct lida_Tensor* tensor, const uint32_t indices[], int 
 /* Get number of values in tensor */
 uint32_t lida_tensor_size(const struct lida_Tensor* tensor);
 void lida_tensor_fill_zeros(struct lida_Tensor* tensor);
+void lida_tensor_fill(struct lida_Tensor* tensor, const void* obj);
 /* O(1) */
 struct lida_Tensor* lida_tensor_transpose(struct lida_Tensor* tensor, const uint32_t dims[], int rank);
 /* O(1) */
@@ -52,6 +54,8 @@ struct lida_Tensor* lida_tensor_slice(struct lida_Tensor* tensor, const uint32_t
 struct lida_Tensor* lida_tensor_deep_copy(struct lida_Tensor* tensor);
 /* does a deep copy if tensor is not packed in memory */
 struct lida_Tensor* lida_tensor_reshape(struct lida_Tensor* tensor, const uint32_t dims[], int rank);
+
+struct lida_Tensor* lida_tensor_flip(struct lida_Tensor* tensor, const uint32_t axes[], int num_axes);
 
 #ifdef __cplusplus
 }

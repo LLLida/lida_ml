@@ -103,5 +103,40 @@ int main()
   auto t6 = lida::Tensor(std::span{raw_matrix}, t6_dims).transpose(tdims);
   print_tensor(t6);
 
+  uint32_t t7_start[2] = { 1, 1 };
+  uint32_t t7_stop[2] = { 3, 4 };
+  uint32_t t7_shape[2] = { 1, 6 };
+  auto t7 = t6.slice(t7_start, t7_stop).reshape(t7_shape);
+  print_tensor(t7);
+
+  uint32_t t8_start[2] = { 1, 1 };
+  uint32_t t8_stop[2] = { 2, 4 };
+  auto t8 = t6.slice(t8_start, t8_stop);
+  t8.fill(69.69f);
+  // t8.fill_zeros();
+
+  print_tensor(t6);
+  print_tensor(t7);
+  print_tensor_dim(t8);
+  print_tensor(t8);
+
+  uint32_t t6_start[2] = {0, 0};
+  uint32_t t6_stop[2] = {4, 3};
+  t6 = t6.slice(t6_start, t6_stop);
+
+  uint32_t t9_flip_axes[] = {1};
+  auto t9 = t6.flip(t9_flip_axes);
+  print_tensor(t9);
+
+  uint32_t t10_flip_axes[] = {0};
+  auto t10 = t6.flip(t10_flip_axes);
+  print_tensor(t10);
+
+  auto t11 = t10.flip(t9_flip_axes);
+  print_tensor(t11);
+
+  auto t12 = t9.flip(t10_flip_axes);
+  print_tensor(t12);
+
   return 0;
 }

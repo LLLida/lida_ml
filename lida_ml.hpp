@@ -37,7 +37,7 @@ namespace lida {
   using Format = lida_Format;
 
   template<typename T>
-  static Format format() LIDA_ML_NOEXCEPT {
+  static Format to_format() LIDA_ML_NOEXCEPT {
     if constexpr (std::is_same_v<T, float>) {
       return LIDA_FORMAT_F32;
     } else if constexpr (std::is_same_v<T, int32_t>) {
@@ -80,7 +80,7 @@ namespace lida {
 
     template<typename T, std::size_t E>
     Tensor(std::span<T, E> external, std::span<uint32_t> dims) LIDA_ML_NOEXCEPT {
-      raw = lida_tensor_create_from_memory(external.data(), external.size_bytes(), dims.data(), dims.size(), format<T>());
+      raw = lida_tensor_create_from_memory(external.data(), external.size_bytes(), dims.data(), dims.size(), to_format<T>());
     }
 
     Tensor(const Tensor& other) = delete;
@@ -91,12 +91,26 @@ namespace lida {
     }
 
     ~Tensor() LIDA_ML_NOEXCEPT {
-      lida_tensor_destroy(raw);
+      if (raw)
+	lida_tensor_destroy(raw);
+    }
+
+    Tensor& operator=(Tensor&& other) LIDA_ML_NOEXCEPT {
+      if (raw)
+	lida_tensor_destroy(raw);
+      raw = other.raw;
+      other.raw = NULL;
+      return *this;
     }
 
     [[nodiscard]]
     lida_Tensor* handle() LIDA_ML_NOEXCEPT {
       return raw;
+    }
+
+    [[nodiscard]]
+    Format format() const LIDA_ML_NOEXCEPT {
+      return lida_tensor_get_format(raw);
     }
 
     [[nodiscard]]
@@ -127,6 +141,14 @@ namespace lida {
       lida_tensor_fill_zeros(raw);
     }
 
+    template<typename T>
+    void fill(T value) {
+      if (!check_type<T>(format())) {
+	throw std::logic_error("lida::Tensor::fill: invalid type");
+      }
+      lida_tensor_fill(raw, &value);
+    }
+
     [[nodiscard]]
     Tensor transpose(std::span<const uint32_t> dims) LIDA_ML_NOEXCEPT {
       return lida_tensor_transpose(raw, dims.data(), dims.size());
@@ -148,6 +170,11 @@ namespace lida {
     [[nodiscard]]
     Tensor reshape(std::span<const uint32_t> dims) LIDA_ML_NOEXCEPT {
       return lida_tensor_reshape(raw, dims.data(), dims.size());
+    }
+
+    [[nodiscard]]
+    Tensor flip(std::span<const uint32_t> axes) LIDA_ML_NOEXCEPT {
+      return lida_tensor_flip(raw, axes.data(), axes.size());
     }
 
   };
