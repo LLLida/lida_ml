@@ -138,5 +138,19 @@ int main()
   auto t12 = t9.flip(t10_flip_axes);
   print_tensor(t12);
 
+  uint32_t t13_start[2] = {0, 0};
+  uint32_t t13_stop[2] = {3, 3};
+  auto t13 = t6.slice(t13_start, t13_stop);
+  print_tensor(t13);
+
+  auto t14 = t13.rot90(0, 1, /*n=*/1);
+  print_tensor(t14);
+
+  auto t15 = t13.rot90(0, 1, /*n=*/2);
+  print_tensor(t15);
+
+  auto t16 = t13.rot90(0, 1, /*n=*/-1);
+  print_tensor(t16);
+
   return 0;
 }

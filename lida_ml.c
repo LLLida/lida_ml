@@ -210,6 +210,13 @@ free_allocation(struct Allocation* alloc)
   }
 }
 
+// python's % operator
+static int32_t
+python_mod(int32_t a, int32_t b)
+{
+  return (b + (a % b)) % b;
+}
+
 static int32_t
 seq_rank(const struct lida_Tensor* tensor)
 {
@@ -638,9 +645,7 @@ lida_tensor_flip(struct lida_Tensor* tensor, const uint32_t axes[], int num_axes
   for (int i = 0; i < num_axes; i++) {
     uint32_t ax = axes[i];
 
-    int rank;
-    lida_tensor_get_dims(ret, NULL, &rank);
-    if (rank == 1) {
+    if (ret->rank == 1) {
       // reverse an array
       for (uint32_t coord = 0; coord < tdim(ret, 0).num/2; coord++) {
 	uint32_t a = coord*bytes_per_elem;
@@ -651,13 +656,13 @@ lida_tensor_flip(struct lida_Tensor* tensor, const uint32_t axes[], int num_axes
       }
     } else {
       uint32_t indices[LIDA_MAX_DIMENSIONALITY];
-      for (int i = 0; i < rank; i++) {
+      for (int i = 0; i < ret->rank; i++) {
 	indices[i] = i;
       }
       indices[ax] = 0;
       indices[0] = ax;
 
-      struct lida_Tensor* temp = lida_tensor_transpose(ret, indices, rank);
+      struct lida_Tensor* temp = lida_tensor_transpose(ret, indices, ret->rank);
       for (uint32_t coord = 0; coord < tdim(temp, 0).num/2; coord++) {
 	uint32_t indices[LIDA_MAX_DIMENSIONALITY] = {0};
 
@@ -684,5 +689,62 @@ lida_tensor_flip(struct lida_Tensor* tensor, const uint32_t axes[], int num_axes
       lida_tensor_destroy(temp);
     }
   }
+  return ret;
+}
+
+struct lida_Tensor*
+lida_tensor_rot90(struct lida_Tensor* tensor, uint32_t ax1, uint32_t ax2, int n)
+{
+  if (ax1 >= (uint32_t)tensor->rank || ax2 >= (uint32_t)tensor->rank) {
+    LOG_ERROR("axis is not smaller than tensor's rank");
+    return NULL;
+  }
+  if (ax1 == ax2) {
+    LOG_ERROR("rotation axes must not match");
+    return NULL;
+  }
+  if (tdim(tensor, ax1).num != tdim(tensor, ax2).num) {
+    LOG_ERROR("dimensions of rotation axes must match");
+    return NULL;
+  }
+
+  n = python_mod(n, 4);
+  if (n == 0) {
+    return tensor_copy(tensor);
+  }
+
+  uint32_t bytes_per_elem = format_num_bytes(tensor->format);
+
+  struct lida_Tensor* ret = lida_tensor_deep_copy(tensor);
+  if (tensor->rank == 2) {
+    uint32_t dst[2];
+    uint32_t src[2];
+    for (uint32_t i = 0; i < tdim(ret, ax1).num; i++) {
+      for (uint32_t j = 0; j < tdim(ret, ax2).num; j++) {
+	src[ax1] = i;
+	src[ax2] = j;
+	switch (n)
+	  {
+	  case 1:
+	    dst[ax1] = j;
+	    dst[ax2] = tdim(tensor, ax1).num - i - 1;
+	    break;
+	  case 2:
+	    dst[ax1] = tdim(tensor, ax1).num - i - 1;
+	    dst[ax2] = tdim(tensor, ax2).num - j - 1;
+	    break;
+	  case 3:
+	    dst[ax1] = tdim(tensor, ax2).num - j - 1;
+	    dst[ax2] = i;
+	    break;
+	  }
+	memcpy(lida_tensor_get(ret, dst, 2), lida_tensor_get(tensor, src, 2), bytes_per_elem);
+      }
+    }
+  } else {
+    LOG_WARN("rotation for tensors with rank > 2 not implemented");
+    return NULL;
+  }
+
   return ret;
 }

@@ -177,6 +177,11 @@ namespace lida {
       return lida_tensor_flip(raw, axes.data(), axes.size());
     }
 
+    [[nodiscard]]
+    Tensor rot90(uint32_t ax1, uint32_t ax2, int n = 1) LIDA_ML_NOEXCEPT {
+      return lida_tensor_rot90(raw, ax1, ax2, n);
+    }
+
   };
 
 }

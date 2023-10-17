@@ -57,6 +57,9 @@ struct lida_Tensor* lida_tensor_reshape(struct lida_Tensor* tensor, const uint32
 
 struct lida_Tensor* lida_tensor_flip(struct lida_Tensor* tensor, const uint32_t axes[], int num_axes);
 
+/* counter-clockwise rotation for n*90 degrees */
+struct lida_Tensor* lida_tensor_rot90(struct lida_Tensor* tensor, uint32_t ax1, uint32_t ax2, int n);
+
 #ifdef __cplusplus
 }
 #endif
