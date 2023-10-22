@@ -64,9 +64,14 @@ struct lida_Tensor* lida_tensor_deep_copy(struct lida_Tensor* tensor);
 struct lida_Tensor* lida_tensor_reshape(struct lida_Tensor* tensor, const uint32_t dims[], int rank);
 
 struct lida_Tensor* lida_tensor_flip(struct lida_Tensor* tensor, const uint32_t axes[], int num_axes);
-
 /* counter-clockwise rotation for n*90 degrees */
 struct lida_Tensor* lida_tensor_rot90(struct lida_Tensor* tensor, uint32_t ax1, uint32_t ax2, int n);
+
+struct lida_Compute_Graph* lida_compute_graph_create(int requires_grad);
+void lida_compute_graph_destroy(struct lida_Compute_Graph* cg);
+int lida_compute_graph_add_input(struct lida_Compute_Graph* cg, const char* name, const uint32_t dims[], int rank);
+int lida_compute_graph_add_parameter(struct lida_Compute_Graph* cg, lida_Tensor* parameter, int frozen);
+int lida_compute_graph_add_child(struct lida_Compute_Graph* cg, struct lida_Compute_Graph* child);
 
 #ifdef __cplusplus
 }

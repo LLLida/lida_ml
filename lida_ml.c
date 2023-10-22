@@ -40,6 +40,7 @@ struct Compute_Node {
   struct Compute_Node* parents[4];
   int32_t num_args;
   struct lida_Tensor* grad;
+  int frozen;
 };
 
 struct lida_Compute_Graph {
@@ -738,4 +739,41 @@ lida_tensor_rot90(struct lida_Tensor* tensor, uint32_t ax1, uint32_t ax2, int n)
   }
 
   return ret;
+}
+
+struct lida_Compute_Graph*
+lida_compute_graph_create(int requires_grad)
+{
+  struct lida_Compute_Graph* cg = g_ml.alloc(sizeof(struct lida_Compute_Graph));
+  cg->num_inputs = 0;
+  cg->num_outputs = 0;
+  cg->requires_grad = requires_grad;
+  return cg;
+}
+
+void
+lida_compute_graph_destroy(struct lida_Compute_Graph* cg)
+{
+  g_ml.dealloc(cg);
+}
+
+int
+lida_compute_graph_add_input(struct lida_Compute_Graph* cg, const char* name, const uint32_t dims[], int rank)
+{
+  if (cg->num_inputs >= ARR_SIZE(cg->inputs)) {
+    LOG_ERROR("max number of inputs exceeded");
+    return -1;
+  }
+}
+
+int
+lida_compute_graph_add_parameter(struct lida_Compute_Graph* cg, lida_Tensor* parameter, int frozen)
+{
+
+}
+
+int
+lida_compute_graph_add_child(struct lida_Compute_Graph* cg, struct lida_Compute_Graph* child)
+{
+
 }

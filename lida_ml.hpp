@@ -184,6 +184,67 @@ namespace lida {
 
   };
 
+  class Compute_Graph {
+
+    struct lida_Compute_Graph* raw;
+
+    Compute_Graph(struct lida_Compute_Graph* handle) LIDA_ML_NOEXCEPT {
+      raw = handle;
+    }
+
+  public:
+
+    Compute_Graph(bool requires_grad = true) LIDA_ML_NOEXCEPT {
+      raw = lida_compute_graph_create(requires_grad);
+    }
+
+    Compute_Graph(const Compute_Graph& other) = delete;
+
+    Compute_Graph(Compute_Graph&& other) LIDA_ML_NOEXCEPT {
+      raw = other.raw;
+      other.raw = NULL;
+    }
+
+    ~Compute_Graph() LIDA_ML_NOEXCEPT {
+      lida_compute_graph_destroy(raw);
+    }
+
+    Compute_Graph& operator=(Compute_Graph&& other) LIDA_ML_NOEXCEPT {
+      if (raw)
+	lida_compute_graph_destroy(raw);
+      raw = other.raw;
+      other.raw = NULL;
+      return *this;
+    }
+
+    [[nodiscard]]
+    lida_Compute_Graph* handle() LIDA_ML_NOEXCEPT {
+      return raw;
+    }
+
+    Compute_Graph& add_input(const char* name, std::span<uint32_t> shape) {
+      if (lida_compute_graph_add_input(raw, name, shape.data(), shape.size()) != 0) {
+	throw std::runtime_error("TODO: failed");
+      }
+      return *this;
+    }
+
+    Compute_Graph& add_parameter(lida::Tensor& tensor, bool frozen = false) {
+      if (lida_compute_graph_add_parameter(raw, tensor.handle(), frozen) != 0) {
+	throw std::runtime_error("TODO: failed");
+      }
+      return *this;
+    }
+
+    Compute_Graph& add_child(Compute_Graph&& child) {
+      if (lida_compute_graph_add_child(raw, child.raw) != 0) {
+	throw std::runtime_error("TODO: failed");
+      }
+      return *this;
+    }
+
+  };
+
 }
 
 #endif // LIDA_ML_HPP

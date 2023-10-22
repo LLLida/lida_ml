@@ -11,3 +11,4 @@ function(add_sample TARGET)
 endfunction(add_sample)
 
 add_sample(tensors)
+add_sample(grad)
