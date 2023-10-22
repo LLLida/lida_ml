@@ -5,8 +5,6 @@
 
 #include "string.h"
 
-#define LIDA_GC_MASK 0xffff
-
 #define ARR_SIZE(arr) sizeof(arr) / sizeof(arr[0])
 
 struct Dim {
@@ -30,25 +28,88 @@ struct lida_Tensor {
   struct Allocation* alloc;
 };
 
+struct Input {
+  const char* name;
+  uint32_t dims[LIDA_MAX_DIMENSIONALITY];
+  int32_t rank;
+  struct lida_Tensor* tensor;
+};
+
+struct Compute_Node {
+  struct lida_Gate* gate;
+  struct Compute_Node* parents[4];
+  int32_t num_args;
+  struct lida_Tensor* grad;
+};
+
+struct lida_Compute_Graph {
+  struct Compute_Node* inputs[32];
+  struct Compute_Node* outputs[32];
+  int32_t num_inputs;
+  int32_t num_outputs;
+
+  int requires_grad;
+};
+
 #define tdim(tensor, dim) ((tensor)->dims[(tensor)->dims[dim].index])
 
-struct Allocation_Pool {
-  struct Allocation data[512];
-  uint32_t num_free;
-  uint32_t free_index;
-  struct Allocation_Pool* next;
-};
+#define POOL_DEF(type, num) struct type##_Pool {	\
+    struct type data[num];				\
+    uint32_t num_free;					\
+    uint32_t free_index;				\
+    struct type##_Pool* next;				\
+  }
+#define POOL_NAME(type) g_##type##_pools
+#define POOL_DECL(type) static struct type##_Pool* POOL_NAME(type) = NULL
+#define ADD_POOL_NAME(type) add_##type##_pool
+#define ADD_POOL_DECL(type) static void					\
+  ADD_POOL_NAME(type) ()						\
+  {									\
+    struct type##_Pool* pool = g_ml.alloc(sizeof(struct type##_Pool));	\
+    pool->num_free = ARR_SIZE(pool->data);				\
+    pool->free_index = 0;						\
+    pool->next = POOL_NAME(type);					\
+    for (size_t i = 0; i < ARR_SIZE(pool->data); i++) {			\
+      uint32_t* index = (uint32_t*)&pool->data[i];			\
+      *index = i+1;							\
+    }									\
+    POOL_NAME(type) = pool;						\
+  }
+#define ALLOCATE_DECL(type) static struct type*			\
+  allocate_##type ()						\
+  {								\
+    struct type##_Pool* pool = POOL_NAME(type);		\
+    while (pool != NULL && pool->num_free > 0) {	\
+      pool = pool->next;				\
+    }								\
+    if (pool == NULL || pool->num_free == 0) {	\
+      ADD_POOL_NAME(type)();					\
+      pool = POOL_NAME(type);				\
+    }								\
+    struct type* ret = &pool->data[pool->free_index];	\
+    uint32_t* index = (uint32_t*)ret;				\
+    pool->free_index = *index;					\
+    pool->num_free--;						\
+    return ret;							\
+  }
+#define CLEAR_POOLS(type)						\
+  while (POOL_NAME(type)) {					\
+    if (POOL_NAME(type)->num_free != ARR_SIZE(POOL_NAME(type)->data)) { \
+      do_warning = 1;							\
+    }									\
+    struct type##_Pool* next = POOL_NAME(type)->next;	\
+    g_ml.dealloc(POOL_NAME(type));				\
+    POOL_NAME(type) = next;					\
+  }
 
-struct Tensor_Pool {
-  struct lida_Tensor data[1024];
-  uint32_t num_free;
-  uint32_t free_index;
-  struct Tensor_Pool* next;
-};
+POOL_DEF(Allocation, 512);
+POOL_DEF(lida_Tensor, 1024);
+POOL_DEF(Compute_Node, 128);
 
 static struct lida_ML g_ml;
-static struct Tensor_Pool* g_tpools = NULL;
-static struct Allocation_Pool* g_apools = NULL;
+POOL_DECL(Allocation);
+POOL_DECL(lida_Tensor);
+POOL_DECL(Compute_Node);
 
 #define LOG_DEBUG(...) g_ml.log(0, __VA_ARGS__)
 #define LOG_INFO(...)  g_ml.log(1, __VA_ARGS__)
@@ -58,40 +119,17 @@ static struct Allocation_Pool* g_apools = NULL;
 
 /// static functions
 
-static void
-add_tensor_pool()
-{
-  struct Tensor_Pool* pool = g_ml.alloc(sizeof(struct Tensor_Pool));
-  pool->num_free = ARR_SIZE(pool->data);
-  pool->free_index = 0;
-  pool->next = g_tpools;
-  for (size_t i = 0; i < ARR_SIZE(pool->data); i++) {
-    uint32_t* index = (uint32_t*)&pool->data[i];
-    *index = i+1;
-  }
-
-  g_tpools = pool;
-}
-
-static void
-add_alloc_pool()
-{
-  struct Allocation_Pool* pool = g_ml.alloc(sizeof(struct Allocation_Pool));
-  pool->num_free = ARR_SIZE(pool->data);
-  pool->free_index = 0;
-  pool->next = g_apools;
-  for (size_t i = 0; i < ARR_SIZE(pool->data); i++) {
-    uint32_t* index = (uint32_t*)&pool->data[i];
-    *index = i+1;
-  }
-
-  g_apools = pool;
-}
+ADD_POOL_DECL(Allocation)
+ADD_POOL_DECL(lida_Tensor)
+ADD_POOL_DECL(Compute_Node)
+ALLOCATE_DECL(Allocation)
+ALLOCATE_DECL(lida_Tensor)
+ALLOCATE_DECL(Compute_Node)
 
 static uint32_t
 format_num_bytes(lida_Format format)
 {
-  switch (format)
+  switch (format & LIDA_FORMAT_MASK)
     {
     case LIDA_FORMAT_U16:
     case LIDA_FORMAT_I16:
@@ -107,33 +145,12 @@ format_num_bytes(lida_Format format)
     }
 }
 
-static struct lida_Tensor*
-allocate_tensor()
-{
-  // find suitable pool
-  struct Tensor_Pool* pool = g_tpools;
-  while (pool != NULL && pool->num_free > 0) {
-    pool = pool->next;
-  }
-  if (pool == NULL || pool->num_free == 0) {
-    add_tensor_pool();
-    pool = g_tpools;
-  }
-
-  // take free object
-  struct lida_Tensor* ret = &pool->data[pool->free_index];
-  uint32_t* index = (uint32_t*)ret;
-  pool->free_index = *index;
-  pool->num_free--;
-  return ret;
-}
-
 static void
 release_tensor(struct lida_Tensor* tensor)
 {
   // find parent pool
-  struct Tensor_Pool* prev = NULL;
-  struct Tensor_Pool* pool = g_tpools;
+  struct lida_Tensor_Pool* prev = NULL;
+  struct lida_Tensor_Pool* pool = POOL_NAME(lida_Tensor);
   while (tensor < pool->data || tensor >= pool->data+ARR_SIZE(pool->data)) {
     prev = pool;
     pool = pool->next;
@@ -146,8 +163,8 @@ release_tensor(struct lida_Tensor* tensor)
 
   // release entire pool
   if (pool->num_free == ARR_SIZE(pool->data)) {
-    if (g_tpools == pool) {
-      g_tpools = pool->next;
+    if (POOL_NAME(lida_Tensor) == pool) {
+      POOL_NAME(lida_Tensor) = pool->next;
     } else {
       prev->next = pool->next;
     }
@@ -158,22 +175,7 @@ release_tensor(struct lida_Tensor* tensor)
 static struct Allocation*
 do_allocation(uint32_t bytes)
 {
-  // find suitable pool
-  struct Allocation_Pool* pool = g_apools;
-  while (pool != NULL && pool->num_free > 0) {
-    pool = pool->next;
-  }
-  if (pool == NULL || pool->num_free == 0) {
-    add_alloc_pool();
-    pool = g_apools;
-  }
-
-  // take free object
-  struct Allocation* ret = &pool->data[pool->free_index];
-  uint32_t* index = (uint32_t*)ret;
-  pool->free_index = *index;
-  pool->num_free--;
-
+  struct Allocation* ret = allocate_Allocation();
   // do actual allocation
   ret->ptr = g_ml.alloc(bytes);
   ret->refs = 1;
@@ -188,7 +190,7 @@ free_allocation(struct Allocation* alloc)
 
   // find parent pool
   struct Allocation_Pool* prev = NULL;
-  struct Allocation_Pool* pool = g_apools;
+  struct Allocation_Pool* pool = POOL_NAME(Allocation);
   while (alloc < pool->data || alloc >= pool->data+ARR_SIZE(pool->data)) {
     prev = pool;
     pool = pool->next;
@@ -201,8 +203,8 @@ free_allocation(struct Allocation* alloc)
 
   // release entire pool
   if (pool->num_free == ARR_SIZE(pool->data)) {
-    if (g_apools == pool) {
-      g_apools = pool->next;
+    if (POOL_NAME(Allocation) == pool) {
+      POOL_NAME(Allocation) = pool->next;
     } else {
       prev->next = pool->next;
     }
@@ -259,7 +261,7 @@ tensor_offset(const struct lida_Tensor* tensor, const uint32_t indices[])
 static struct lida_Tensor*
 tensor_copy(struct lida_Tensor* tensor)
 {
-  struct lida_Tensor* ret = allocate_tensor();
+  struct lida_Tensor* ret = allocate_lida_Tensor();
   memcpy(ret, tensor, sizeof(struct lida_Tensor));
   if (tensor->alloc)
     tensor->alloc->refs++;
@@ -279,19 +281,8 @@ void
 lida_ml_done()
 {
   int do_warning = 0;
-  while (g_tpools) {
-    if (g_tpools->num_free != ARR_SIZE(g_tpools->data)) {
-      do_warning = 1;
-    }
-    struct Tensor_Pool* next = g_tpools->next;
-    g_ml.dealloc(g_tpools);
-    g_tpools = next;
-  }
-  while (g_apools) {
-    struct Allocation_Pool* next = g_apools->next;
-    g_ml.dealloc(g_apools);
-    g_apools = next;
-  }
+  CLEAR_POOLS(lida_Tensor)
+  CLEAR_POOLS(Allocation)
   if (do_warning) {
     LOG_WARN("not all tensors were destroyed");
   }
@@ -309,7 +300,7 @@ lida_tensor_create(const uint32_t dims[], int rank, lida_Format format)
     return NULL;
   }
 
-  struct lida_Tensor* ret = allocate_tensor();
+  struct lida_Tensor* ret = allocate_lida_Tensor();
   ret->format = format;
   ret->rank = rank;
   uint32_t size = 1;
@@ -359,7 +350,7 @@ lida_tensor_create_from_memory(void* memory, uint32_t bytes, const uint32_t dims
     LOG_ERROR("bytes and dims mismatch(%u != %u)", bytes, s);
     return NULL;
   }
-  struct lida_Tensor* ret = allocate_tensor();
+  struct lida_Tensor* ret = allocate_lida_Tensor();
   ret->format = format;
   ret->rank = rank;
   uint32_t size = 1;

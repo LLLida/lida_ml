@@ -31,6 +31,14 @@ typedef enum {
 
 struct lida_Tensor;
 
+struct lida_Compute_Graph;
+
+struct lida_Gate {
+  const char* name;
+  void* udata;
+  struct lida_Tensor* (*forward)(void* udata, const struct lida_Tensor** args);
+  void (*backward)(void* udata, const struct lida_Tensor* output, struct lida_Tensor** args);
+};
 
 void lida_ml_init(const struct lida_ML* ml);
 void lida_ml_done();
