@@ -5,7 +5,7 @@
 
 #include "string.h"
 
-#define ARR_SIZE(arr) sizeof(arr) / sizeof(arr[0])
+#define ARR_SIZE(arr) (sizeof(arr) / sizeof(arr[0]))
 
 struct Dim {
   uint32_t num;
@@ -28,19 +28,39 @@ struct lida_Tensor {
   struct Allocation* alloc;
 };
 
-struct Input {
+enum {
+  NODE_INPUT,
+  NODE_PARAMETER,
+  NODE_GATE,
+};
+
+struct Node_Input {
   const char* name;
   uint32_t dims[LIDA_MAX_DIMENSIONALITY];
   int32_t rank;
-  struct lida_Tensor* tensor;
+  const struct lida_Tensor* tensor;
+};
+
+struct Node_Parameter {
+  struct lida_Tensor* value;
+  struct lida_Tensor* grad;
+};
+
+struct Node_Gate {
+  const struct lida_Gate* gate;
+  struct lida_Tensor* output;
+  struct lida_Tensor* grad;
+  struct Compute_Node* parents[4];
 };
 
 struct Compute_Node {
-  struct lida_Gate* gate;
-  struct Compute_Node* parents[4];
-  int32_t num_args;
-  struct lida_Tensor* grad;
-  int frozen;
+  union {
+    struct Node_Input input;
+    struct Node_Parameter param;
+    struct Node_Gate gate;
+  } u;
+  int type;
+  size_t refs;
 };
 
 struct lida_Compute_Graph {
@@ -111,6 +131,8 @@ static struct lida_ML g_ml;
 POOL_DECL(Allocation);
 POOL_DECL(lida_Tensor);
 POOL_DECL(Compute_Node);
+
+static struct lida_Gate g_plus_gate;
 
 #define LOG_DEBUG(...) g_ml.log(0, __VA_ARGS__)
 #define LOG_INFO(...)  g_ml.log(1, __VA_ARGS__)
@@ -269,6 +291,138 @@ tensor_copy(struct lida_Tensor* tensor)
   return ret;
 }
 
+static const struct lida_Tensor*
+tensor_const_copy(const struct lida_Tensor* tensor)
+{
+  struct lida_Tensor* ret = allocate_lida_Tensor();
+  memcpy(ret, tensor, sizeof(struct lida_Tensor));
+  if (tensor->alloc)
+    tensor->alloc->refs++;
+  return ret;
+}
+
+static int
+compare_tensor_shapes(const struct lida_Tensor* a, const struct lida_Tensor* b)
+{
+  if (a->rank != b->rank) {
+    return (a->rank > b->rank) - (a->rank < b->rank);
+  }
+  for (int32_t i = 0; i < a->rank; i++) {
+    uint32_t x = tdim(a, i).num;
+    uint32_t y = tdim(b, i).num;
+    if (x != y) {
+      return (x > y) - (x < y);
+    }
+  }
+  return 0;
+}
+
+static const struct lida_Tensor*
+get_node_tensor(struct Compute_Node* node)
+{
+  if (node->type == NODE_INPUT) {
+    return node->u.input.tensor;
+  } else if (node->type == NODE_PARAMETER) {
+    return node->u.param.value;
+  } else {
+    return node->u.gate.output;
+  }
+}
+
+static void
+compute_node_clear_output(struct Compute_Node* node)
+{
+  if (node->type == NODE_INPUT || node->type == NODE_PARAMETER)
+    return;
+
+  struct Node_Gate* gate = &node->u.gate;
+  gate->output = NULL;
+  for (int i = 0; i < gate->gate->num_args; i++) {
+    compute_node_clear_output(gate->parents[i]);
+  }
+}
+
+static void
+eval_compute_node(struct Compute_Node* node)
+{
+  if (node->type == NODE_INPUT || node->type == NODE_PARAMETER)
+    return;
+
+  struct Node_Gate* gate = &node->u.gate;
+  if (gate->output)
+    return;
+  const struct lida_Tensor* outputs[4];
+  for (int i = 0; i < gate->gate->num_args; i++) {
+    eval_compute_node(gate->parents[i]);
+    outputs[i] = get_node_tensor(gate->parents[i]);
+  }
+  gate->output = gate->gate->forward(gate->gate->udata, outputs);
+}
+
+#define PERFORM_ELEMENTWISE_OP2(a, b, c, type, op) {			\
+  uint32_t indices[LIDA_MAX_DIMENSIONALITY] = {0};			\
+  while (indices[a->rank-1] < a->dims[a->rank-1].num) {	\
+    type* va = lida_tensor_get_unchecked(a, indices);			\
+    type* vb = lida_tensor_get_unchecked(b, indices);			\
+    type* vc = lida_tensor_get_unchecked(c, indices);			\
+    *vc = *va op *vb;							\
+    for (int32_t i = 0; i < a->rank; i++) {			\
+      indices[i]++;							\
+      if (indices[i] == a->dims[i].num && i < a->rank-1) {	\
+	indices[i] = 0;							\
+      } else {								\
+	break;								\
+      }									\
+    }									\
+  }									\
+  }
+
+static struct lida_Tensor*
+plus_gate_forward(void* udata, const struct lida_Tensor** args)
+{
+  (void)udata;
+
+  const struct lida_Tensor* a = args[0];
+  const struct lida_Tensor* b = args[1];
+  if (compare_tensor_shapes(a, b) != 0) {
+    LOG_ERROR("+: tensors must be the same shape");
+    return NULL;
+  }
+  if (a->format != b->format) {
+    LOG_ERROR("+: tensors must have the same format");
+  }
+
+  uint32_t dims[LIDA_MAX_DIMENSIONALITY];
+  lida_tensor_get_dims(a, dims, NULL);
+  struct lida_Tensor* c = lida_tensor_create(dims, a->rank, a->format);
+
+  switch (a->format)
+    {
+    case LIDA_FORMAT_I32:
+      PERFORM_ELEMENTWISE_OP2(a, b, c, int32_t, +);
+      break;
+    case LIDA_FORMAT_U32:
+      PERFORM_ELEMENTWISE_OP2(a, b, c, uint32_t, +);
+      break;
+    case LIDA_FORMAT_F32:
+      PERFORM_ELEMENTWISE_OP2(a, b, c, float, +);
+      break;
+    default:
+      LOG_ERROR("+ on this format is not supported");
+      lida_tensor_destroy(c);
+      return NULL;
+    }
+  return c;
+}
+
+static void
+plus_gate_backward(void* udata, const struct lida_Tensor* output, struct lida_Tensor** args)
+{
+  (void)udata;
+  (void)output;
+  (void)args;
+}
+
 
 /// library functions
 
@@ -276,6 +430,13 @@ void
 lida_ml_init(const struct lida_ML* ml)
 {
   memcpy(&g_ml, ml, sizeof(struct lida_ML));
+
+  g_plus_gate = (struct lida_Gate) {
+    .name = "+",
+    .forward = &plus_gate_forward,
+    .backward = &plus_gate_backward,
+    .num_args = 2
+  };
 }
 
 void
@@ -403,6 +564,12 @@ lida_tensor_get(struct lida_Tensor* tensor, const uint32_t indices[], int num_in
     }
   }
 
+  return lida_tensor_get_unchecked(tensor, indices);
+}
+
+void*
+lida_tensor_get_unchecked(const struct lida_Tensor* tensor, const uint32_t indices[])
+{
   uint32_t offset = tensor_offset(tensor, indices);
   uint8_t* bytes = tensor->cpu_mem;
   return bytes + offset;
@@ -760,20 +927,141 @@ lida_compute_graph_destroy(struct lida_Compute_Graph* cg)
 int
 lida_compute_graph_add_input(struct lida_Compute_Graph* cg, const char* name, const uint32_t dims[], int rank)
 {
-  if (cg->num_inputs >= ARR_SIZE(cg->inputs)) {
+  if (cg->num_inputs >= (int32_t)ARR_SIZE(cg->inputs)) {
     LOG_ERROR("max number of inputs exceeded");
     return -1;
   }
+  struct Compute_Node* node = allocate_Compute_Node();
+  node->type = NODE_INPUT;
+  node->refs = 1;
+  node->u.input = (struct Node_Input) {
+    .name = name,
+    .rank = rank,
+    .tensor = NULL,
+  };
+  memcpy(node->u.input.dims, dims, rank * sizeof(uint32_t));
+
+  cg->inputs[cg->num_inputs++] = node;
+  cg->outputs[cg->num_outputs++] = node;
+
+  return 0;
 }
 
 int
-lida_compute_graph_add_parameter(struct lida_Compute_Graph* cg, lida_Tensor* parameter, int frozen)
+lida_compute_graph_add_parameter(struct lida_Compute_Graph* cg, struct lida_Tensor* parameter, int frozen)
 {
+  (void)frozen;
+  if (cg->num_outputs >= (int32_t)ARR_SIZE(cg->outputs)) {
+    LOG_ERROR("max number of outputs exceeded");
+    return -1;
+  }
 
+  struct Compute_Node* node = allocate_Compute_Node();
+  node->type = NODE_PARAMETER;
+  node->refs = 1;
+  node->u.param = (struct Node_Parameter) {
+    .value = parameter,
+    .grad = NULL,
+    // .frozen = frozen
+  };
+
+  cg->outputs[cg->num_outputs++] = node;
+
+  return 0;
+}
+
+int
+lida_compute_graph_add_gate(struct lida_Compute_Graph* cg, const struct lida_Gate* gate)
+{
+  if (cg->num_outputs >= (int32_t)ARR_SIZE(cg->outputs)) {
+    LOG_ERROR("max number of outputs exceeded");
+    return -1;
+  }
+  if (cg->num_outputs != gate->num_args) {
+    LOG_ERROR("argument count mismatch");
+    return -1;
+  }
+
+  struct Compute_Node* node = allocate_Compute_Node();
+  node->type = NODE_GATE;
+  node->refs = 1;
+  if (cg->num_outputs >= (int32_t)ARR_SIZE(node->u.gate.parents)) {
+    LOG_ERROR("max number of args of gates exceeded");
+    return -1;
+  }
+  node->u.gate = (struct Node_Gate) {
+    .gate = gate,
+    .output = NULL,
+    .grad = NULL,
+  };
+  memcpy(node->u.gate.parents, cg->outputs, gate->num_args * sizeof(struct Compute_Node*));
+
+  cg->num_outputs = 1;
+  cg->outputs[0] = node;
+
+  return 0;
 }
 
 int
 lida_compute_graph_add_child(struct lida_Compute_Graph* cg, struct lida_Compute_Graph* child)
 {
+  if (cg->num_inputs + child->num_inputs > (int32_t)ARR_SIZE(cg->inputs)) {
+    LOG_ERROR("max number of inputs exceeded");
+    return -1;
+  }
+  // TODO: increment ref count for child
+  for (int32_t i = 0; i < child->num_inputs; i++) {
+    cg->inputs[cg->num_inputs++] = child->inputs[i];
+  }
+  // FIXME: how do I connect? I think I need to do additional stuff
+  return 0;
+}
 
+int
+lida_compute_graph_set_input(struct lida_Compute_Graph* cg, const char* name, const struct lida_Tensor* tensor)
+{
+  for (int32_t i = 0; i < cg->num_inputs; i++) {
+    struct Node_Input* input = &cg->inputs[i]->u.input;
+    if (strcmp(name, input->name)) {
+      if (input->rank != tensor->rank) {
+	LOG_ERROR("input tensor rank mismatch");
+	return -1;
+      }
+      for (int32_t j = 0; j < tensor->rank; j++) {
+	if (input->dims[j] != tdim(tensor, j).num) {
+	  LOG_ERROR("input tensor dimension mismatch(%u != %u)", input->dims[j], tdim(tensor, j).num);
+	  return -1;
+	}
+      }
+      input->tensor = tensor;
+      return 0;
+    }
+  }
+  LOG_ERROR("no input with name '%s' found", name);
+  return -1;
+}
+
+void
+lida_compute_graph_forward(struct lida_Compute_Graph* cg)
+{
+  for (int i = 0; i < cg->num_outputs; i++) {
+    eval_compute_node(cg->outputs[i]);
+  }
+}
+
+const struct lida_Tensor*
+lida_compute_graph_get_output(struct lida_Compute_Graph* cg, int index)
+{
+  if (index >= cg->num_outputs) {
+    LOG_ERROR("index is out of bounds(%d >= %d)", index, cg->num_outputs);
+    return NULL;
+  }
+
+  return tensor_const_copy(get_node_tensor(cg->outputs[index]));
+}
+
+const struct lida_Gate*
+lida_gate_plus()
+{
+  return &g_plus_gate;
 }

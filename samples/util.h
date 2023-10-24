@@ -4,6 +4,8 @@
 #include "stdarg.h"
 #include "stdio.h"
 
+#include <vector>
+
 static void
 log_func(int sev, const char* fmt, ...)
 {
@@ -18,18 +20,45 @@ log_func(int sev, const char* fmt, ...)
 void print_tensor_(const lida::Tensor& tensor, const char* str)
 {
   printf("====== %s\n", str);
-  uint32_t dims[2];
+  int rank = tensor.rank();
+  std::vector<uint32_t> dims(rank);
   tensor.dims(dims);
 
-  uint32_t indices[2];
-  for (uint32_t i = 0; i < dims[1]; i++) {
-    for (uint32_t j = 0; j < dims[0]; j++) {
-      indices[0] = j;
-      indices[1] = i;
-      float* val = (float*)tensor.get(indices);
-      printf("%f%c", *val, " \n"[j == dims[0]-1]);
+  std::vector<uint32_t> indices(rank, 0u);
+  while (indices.back() != dims.back()) {
+    for (uint32_t i = 0; i < dims[1]; i++) {
+      for (uint32_t j = 0; j < dims[0]; j++) {
+	indices[0] = j;
+	indices[1] = i;
+	float* val = (float*)tensor.get(indices);
+	for (int i = 2; i < rank; i++) {
+	  printf("\t");
+	}
+	printf("%f%c", *val, " \n"[j == dims[0]-1]);
+      }
+    }
+    for (int i = 2; i < rank; i++) {
+      indices[i]++;
+      for (int j = rank-1; j >= i; j--) {
+	printf("====");
+      }
+      printf("\n");
+      if (indices[i] == dims[i]) {
+	if (i != rank-1)
+	  indices[i] = 0;
+      } else {
+	break;
+      }
     }
   }
+  // for (uint32_t i = 0; i < dims[1]; i++) {
+  // for (uint32_t j = 0; j < dims[0]; j++) {
+  //     indices[0] = j;
+  //     indices[1] = i;
+  //     float* val = (float*)tensor.get(indices);
+  //     printf("%f%c", *val, " \n"[j == dims[0]-1]);
+  //   }
+  // }
 }
 #define print_tensor(tensor) print_tensor_(tensor, #tensor)
 

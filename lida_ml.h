@@ -38,6 +38,7 @@ struct lida_Gate {
   void* udata;
   struct lida_Tensor* (*forward)(void* udata, const struct lida_Tensor** args);
   void (*backward)(void* udata, const struct lida_Tensor* output, struct lida_Tensor** args);
+  int num_args;
 };
 
 void lida_ml_init(const struct lida_ML* ml);
@@ -50,6 +51,7 @@ lida_Format lida_tensor_get_format(const struct lida_Tensor* tensor);
 void lida_tensor_get_dims(const struct lida_Tensor* tensor, uint32_t* dims, int* rank);
 /* O(1) indexing operation */
 void* lida_tensor_get(struct lida_Tensor* tensor, const uint32_t indices[], int num_indices);
+void* lida_tensor_get_unchecked(const struct lida_Tensor* tensor, const uint32_t indices[]);
 /* Get number of values in tensor */
 uint32_t lida_tensor_size(const struct lida_Tensor* tensor);
 void lida_tensor_fill_zeros(struct lida_Tensor* tensor);
@@ -70,8 +72,15 @@ struct lida_Tensor* lida_tensor_rot90(struct lida_Tensor* tensor, uint32_t ax1, 
 struct lida_Compute_Graph* lida_compute_graph_create(int requires_grad);
 void lida_compute_graph_destroy(struct lida_Compute_Graph* cg);
 int lida_compute_graph_add_input(struct lida_Compute_Graph* cg, const char* name, const uint32_t dims[], int rank);
-int lida_compute_graph_add_parameter(struct lida_Compute_Graph* cg, lida_Tensor* parameter, int frozen);
+int lida_compute_graph_add_parameter(struct lida_Compute_Graph* cg, struct lida_Tensor* parameter, int frozen);
+int lida_compute_graph_add_gate(struct lida_Compute_Graph* cg, const struct lida_Gate* gate);
 int lida_compute_graph_add_child(struct lida_Compute_Graph* cg, struct lida_Compute_Graph* child);
+int lida_compute_graph_set_input(struct lida_Compute_Graph* cg, const char* name, const struct lida_Tensor* tensor);
+void lida_compute_graph_forward(struct lida_Compute_Graph* cg);
+/* graph doesn't own returned tensor */
+const struct lida_Tensor* lida_compute_graph_get_output(struct lida_Compute_Graph* cg, int index);
+
+const struct lida_Gate* lida_gate_plus();
 
 #ifdef __cplusplus
 }

@@ -35,6 +35,7 @@ namespace lida {
   };
 
   using Format = lida_Format;
+  using Gate = lida_Gate;
 
   template<typename T>
   static Format to_format() LIDA_ML_NOEXCEPT {
@@ -53,10 +54,6 @@ namespace lida {
 
     struct lida_Tensor* raw;
 
-    Tensor(struct lida_Tensor* handle) LIDA_ML_NOEXCEPT {
-      raw = handle;
-    }
-
     template<typename T>
     static bool check_type(Format format) LIDA_ML_NOEXCEPT {
       if constexpr (std::is_same_v<T, float>) {
@@ -73,6 +70,10 @@ namespace lida {
     }
 
   public:
+
+    Tensor(struct lida_Tensor* handle) LIDA_ML_NOEXCEPT {
+      raw = handle;
+    }
 
     Tensor(std::span<uint32_t> dims, Format format) LIDA_ML_NOEXCEPT {
       raw = lida_tensor_create(dims.data(), dims.size(), format);
@@ -104,7 +105,12 @@ namespace lida {
     }
 
     [[nodiscard]]
-    lida_Tensor* handle() LIDA_ML_NOEXCEPT {
+    struct lida_Tensor* handle() LIDA_ML_NOEXCEPT {
+      return raw;
+    }
+
+    [[nodiscard]]
+    const struct lida_Tensor* handle() const LIDA_ML_NOEXCEPT {
       return raw;
     }
 
@@ -229,8 +235,15 @@ namespace lida {
       return *this;
     }
 
-    Compute_Graph& add_parameter(lida::Tensor& tensor, bool frozen = false) {
+    Compute_Graph& add_parameter(Tensor& tensor, bool frozen = false) {
       if (lida_compute_graph_add_parameter(raw, tensor.handle(), frozen) != 0) {
+	throw std::runtime_error("TODO: failed");
+      }
+      return *this;
+    }
+
+    Compute_Graph& add_gate(const Gate* gate) {
+      if (lida_compute_graph_add_gate(raw, gate) != 0) {
 	throw std::runtime_error("TODO: failed");
       }
       return *this;
@@ -243,7 +256,30 @@ namespace lida {
       return *this;
     }
 
+    Compute_Graph& set_input(const char* name, const lida::Tensor& tensor) {
+      if (lida_compute_graph_set_input(raw, name, tensor.handle()) != 0) {
+	throw std::runtime_error("TODO: failed");
+      }
+      return *this;
+    }
+
+    void forward() LIDA_ML_NOEXCEPT {
+      lida_compute_graph_forward(raw);
+    }
+
+    lida::Tensor get_output(int index) {
+      const struct lida_Tensor* handle = lida_compute_graph_get_output(raw, index);
+      if (handle == NULL) {
+	throw std::runtime_error("TODO: failed");
+      }
+      return (struct lida_Tensor*)handle;
+    }
+
   };
+
+  inline auto plus() LIDA_ML_NOEXCEPT {
+    return lida_gate_plus();
+  }
 
 }
 
