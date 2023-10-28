@@ -41,6 +41,13 @@ struct lida_Gate {
   int num_args;
 };
 
+struct lida_Loss {
+  void* udata;
+  float (*forward)(struct lida_Loss* self, const struct lida_Tensor* pred, const struct lida_Tensor* actual);
+  void (*backward)(struct lida_Loss* self, struct lida_Tensor* grad);
+  float value;
+};
+
 void lida_ml_init(const struct lida_ML* ml);
 void lida_ml_done();
 struct lida_Tensor* lida_tensor_create(const uint32_t dims[], int rank, lida_Format format);
@@ -81,6 +88,11 @@ void lida_compute_graph_forward(struct lida_Compute_Graph* cg);
 const struct lida_Tensor* lida_compute_graph_get_output(struct lida_Compute_Graph* cg, int index);
 
 const struct lida_Gate* lida_gate_plus();
+const struct lida_Gate* lida_gate_mul();
+
+const struct lida_Gate* lida_gate_relu();
+const struct lida_Gate* lida_gate_sigmoid();
+const struct lida_Gate* lida_gate_tanh();
 
 #ifdef __cplusplus
 }

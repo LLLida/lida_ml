@@ -281,6 +281,22 @@ namespace lida {
     return lida_gate_plus();
   }
 
+  inline auto mul() LIDA_ML_NOEXCEPT {
+    return lida_gate_mul();
+  }
+
+  inline auto relu() LIDA_ML_NOEXCEPT {
+    return lida_gate_relu();
+  }
+
+  inline auto sigmoid() LIDA_ML_NOEXCEPT {
+    return lida_gate_sigmoid();
+  }
+
+  inline auto tanh() LIDA_ML_NOEXCEPT {
+    return lida_gate_tanh();
+  }
+
 }
 
 #endif // LIDA_ML_HPP
