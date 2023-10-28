@@ -3,6 +3,7 @@
  */
 #include "lida_ml.h"
 
+#include "math.h"
 #include "string.h"
 
 #define ARR_SIZE(arr) (sizeof(arr) / sizeof(arr[0]))
@@ -32,6 +33,7 @@ enum {
   NODE_INPUT,
   NODE_PARAMETER,
   NODE_GATE,
+  NODE_GRAPH,
 };
 
 struct Node_Input {
@@ -50,7 +52,9 @@ struct Node_Gate {
   const struct lida_Gate* gate;
   struct lida_Tensor* output;
   struct lida_Tensor* grad;
-  struct Compute_Node* parents[4];
+  size_t first_id;
+  struct Node_Gate* left;
+  struct Node_Gate* right;
 };
 
 struct Compute_Node {
@@ -58,6 +62,7 @@ struct Compute_Node {
     struct Node_Input input;
     struct Node_Parameter param;
     struct Node_Gate gate;
+    struct lida_Compute_Graph* graph;
   } u;
   int type;
 };
@@ -70,12 +75,16 @@ struct Compute_Node_Arena {
 };
 
 struct lida_Compute_Graph {
-  struct Compute_Node_Arena* arena;
+  struct Compute_Node_Arena* first_arena;
+  struct Compute_Node_Arena* last_arena;
 
   struct Compute_Node* inputs[32];
   struct Compute_Node* outputs[32];
-  int32_t num_inputs;
-  int32_t num_outputs;
+  size_t num_inputs;
+  size_t num_outputs;
+  size_t node_counter;
+  struct Node_Gate* first_layer;
+  struct Node_Gate* last_layer;
 
   int requires_grad;
 };
@@ -341,14 +350,29 @@ allocate_compute_node_arena(size_t size)
 static struct Compute_Node*
 allocate_compute_node(struct lida_Compute_Graph* cg)
 {
-  if (cg->arena->offset >= cg->arena->size) {
-    struct Compute_Node_Arena* a = cg->arena;
-    cg->arena = allocate_compute_node_arena(64);
-    cg->arena->next = a;
+  if (cg->last_arena->offset > cg->last_arena->size) {
+    struct Compute_Node_Arena* a = allocate_compute_node_arena(64);
+    cg->last_arena->next = a;
+    cg->last_arena = a;
   }
-  struct Compute_Node* ret = cg->arena->data + cg->arena->offset;
-  cg->arena->offset += 1;
+  struct Compute_Node* ret = cg->last_arena->data + cg->last_arena->offset;
+  cg->last_arena->offset += 1;
+  cg->node_counter++;
   return ret;
+}
+
+static struct Compute_Node*
+get_node_by_id(struct lida_Compute_Graph* cg, size_t id)
+{
+  struct Compute_Node_Arena* arena = cg->first_arena;
+  while (arena) {
+    if (id < arena->offset) {
+      return &arena->data[id];
+    }
+    id -= arena->offset;
+    arena = arena->next;
+  }
+  return NULL;
 }
 
 static const struct lida_Tensor*
@@ -364,20 +388,27 @@ get_node_tensor(struct Compute_Node* node)
 }
 
 static void
-compute_node_clear_output(struct Compute_Node* node)
+compute_node_clear_output(struct lida_Compute_Graph* cg, struct Compute_Node* node)
 {
   if (node->type == NODE_INPUT || node->type == NODE_PARAMETER)
     return;
 
   struct Node_Gate* gate = &node->u.gate;
-  gate->output = NULL;
-  for (int i = 0; i < gate->gate->num_args; i++) {
-    compute_node_clear_output(gate->parents[i]);
+  if (gate->output) {
+    lida_tensor_destroy(gate->output);
+    gate->output = NULL;
+  }
+  if (gate->grad) {
+    lida_tensor_destroy(gate->grad);
+    gate->grad = NULL;
+  }
+  for (size_t i = 0; i < gate->gate->num_args; i++) {
+    compute_node_clear_output(cg, get_node_by_id(cg, gate->first_id + i));
   }
 }
 
 static void
-eval_compute_node(struct Compute_Node* node)
+eval_compute_node(struct lida_Compute_Graph* cg, struct Compute_Node* node)
 {
   if (node->type == NODE_INPUT || node->type == NODE_PARAMETER)
     return;
@@ -386,11 +417,33 @@ eval_compute_node(struct Compute_Node* node)
   if (gate->output)
     return;
   const struct lida_Tensor* outputs[4];
-  for (int i = 0; i < gate->gate->num_args; i++) {
-    eval_compute_node(gate->parents[i]);
-    outputs[i] = get_node_tensor(gate->parents[i]);
+  for (size_t i = 0; i < gate->gate->num_args; i++) {
+    struct Compute_Node* arg = get_node_by_id(cg, gate->first_id + i);
+    eval_compute_node(cg, arg);
+    outputs[i] = get_node_tensor(arg);
   }
   gate->output = gate->gate->forward(gate->gate->udata, outputs);
+}
+
+static void
+destroy_compute_node(struct Compute_Node* node)
+{
+  switch (node->type)
+    {
+    case NODE_INPUT:
+      // do nothing, cg doesn't own input tensors
+      break;
+    case NODE_PARAMETER:
+      // cg doesn't own parameter's value
+      if (node->u.param.grad)
+	lida_tensor_destroy(node->u.param.grad);
+      break;
+    case NODE_GATE:
+      lida_tensor_destroy(node->u.gate.output);
+      if (node->u.gate.grad)
+	lida_tensor_destroy(node->u.gate.grad);
+      break;
+    }
 }
 
 #define PERFORM_ELEMENTWISE_OP2(a, b, c, type, op) {			\
@@ -456,6 +509,62 @@ plus_gate_backward(void* udata, const struct lida_Tensor* output, struct lida_Te
   (void)output;
   (void)args;
 }
+
+static void
+MSE_Loss_forward(struct lida_Loss* self, const struct lida_Tensor* pred, const struct lida_Tensor* actual)
+{
+  if (compare_tensor_shapes(pred, actual) != 0) {
+    LOG_ERROR("MSE loss: tensors must be the same shape");
+    return;
+  }
+  self->value = 0.0;
+  self->pred = pred;
+  self->actual = actual;
+  uint32_t indices[LIDA_MAX_DIMENSIONALITY];
+  while (indices[pred->rank-1] < tdim(pred, pred->rank-1).num) {
+    float* y1 = lida_tensor_get_unchecked(pred, indices);
+    float* y2 = lida_tensor_get_unchecked(actual, indices);
+    float d = y1-y2;
+    self->value += d*d;
+    for (int i = 0; i < pred->rank; i++) {
+      indices[i]++;
+      if (indices[i] == tdim(pred, i).num) {
+	if (i != pred->rank-1)
+	  indices[i] = 0;
+      } else {
+	break;
+      }
+    }
+  }
+}
+
+static struct lida_Tensor*
+MSE_Loss_backward(struct lida_Loss* self)
+{
+  uint32_t dims[LIDA_MAX_DIMENSIONALITY];
+  int rank;
+  lida_tensor_get_dims(self->pred, dims, &rank);
+
+  struct lida_Tensor* grad = lida_tensor_create(dims, rank, self->pred->format);
+  uint32_t indices[LIDA_MAX_DIMENSIONALITY];
+  while (indices[rank-1] < tdim(self->pred, rank-1).num) {
+    float* y1 = lida_tensor_get_unchecked(self->pred, indices);
+    float* y2 = lida_tensor_get_unchecked(self->actual, indices);
+    float* g = lida_tensor_get_unchecked(grad, indices);
+    *g = 2 * fabs(*y2 - *y1);
+    for (int i = 0; i < rank; i++) {
+      indices[i]++;
+      if (indices[i] == dims[i]) {
+	if (i != rank-1)
+	  indices[i] = 0;
+      } else {
+	break;
+      }
+    }
+  }
+  return grad;
+}
+
 
 
 /// library functions
@@ -946,9 +1055,12 @@ struct lida_Compute_Graph*
 lida_compute_graph_create(int requires_grad)
 {
   struct lida_Compute_Graph* cg = g_ml.alloc(sizeof(struct lida_Compute_Graph));
-  cg->arena = allocate_compute_node_arena(64);
+  cg->first_arena = allocate_compute_node_arena(64);
+  cg->last_arena = cg->first_arena;
   cg->num_inputs = 0;
   cg->num_outputs = 0;
+  cg->first_layer = NULL;
+  cg->node_counter = 0;
   cg->requires_grad = requires_grad;
   return cg;
 }
@@ -956,26 +1068,11 @@ lida_compute_graph_create(int requires_grad)
 void
 lida_compute_graph_destroy(struct lida_Compute_Graph* cg)
 {
-  struct Compute_Node_Arena* arena = cg->arena;
+  struct Compute_Node_Arena* arena = cg->first_arena;
   while (arena) {
     for (size_t i = 0; i < arena->offset; i++) {
       struct Compute_Node* node = &arena->data[i];
-      switch (node->type)
-	{
-	case NODE_INPUT:
-	  // do nothing, cg doesn't own input tensors
-	  break;
-	case NODE_PARAMETER:
-	  lida_tensor_destroy(node->u.param.value);
-	  if (node->u.param.grad)
-	    lida_tensor_destroy(node->u.param.grad);
-	  break;
-	case NODE_GATE:
-	  lida_tensor_destroy(node->u.gate.output);
-	  if (node->u.gate.grad)
-	    lida_tensor_destroy(node->u.gate.grad);
-	  break;
-	}
+      destroy_compute_node(node);
     }
     struct Compute_Node_Arena* next = arena->next;
     g_ml.dealloc(arena->data);
@@ -1022,7 +1119,6 @@ lida_compute_graph_add_parameter(struct lida_Compute_Graph* cg, struct lida_Tens
     .grad = NULL,
     // .frozen = frozen
   };
-
   cg->outputs[cg->num_outputs++] = node;
 
   return 0;
@@ -1040,21 +1136,28 @@ lida_compute_graph_add_gate(struct lida_Compute_Graph* cg, const struct lida_Gat
     return -1;
   }
 
+  size_t first_id = cg->node_counter - cg->num_outputs;
+
   struct Compute_Node* node = allocate_compute_node(cg);
   node->type = NODE_GATE;
-  if (cg->num_outputs >= (int32_t)ARR_SIZE(node->u.gate.parents)) {
-    LOG_ERROR("max number of args of gates exceeded");
-    return -1;
-  }
   node->u.gate = (struct Node_Gate) {
     .gate = gate,
     .output = NULL,
     .grad = NULL,
+    .first_id = first_id
   };
-  memcpy(node->u.gate.parents, cg->outputs, gate->num_args * sizeof(struct Compute_Node*));
 
   cg->num_outputs = 1;
   cg->outputs[0] = node;
+
+  if (cg->first_layer == NULL) {
+    cg->first_layer = &node->u.gate;
+    cg->last_layer = cg->first_layer;
+  } else {
+    cg->last_layer->right = &node->u.gate;
+    cg->last_layer->right->left = cg->last_layer;
+    cg->last_layer = cg->last_layer->right;
+  }
 
   return 0;
 }
@@ -1066,8 +1169,7 @@ lida_compute_graph_add_child(struct lida_Compute_Graph* cg, struct lida_Compute_
     LOG_ERROR("max number of inputs exceeded");
     return -1;
   }
-  // TODO: increment ref count for child
-  for (int32_t i = 0; i < child->num_inputs; i++) {
+  for (size_t i = 0; i < child->num_inputs; i++) {
     cg->inputs[cg->num_inputs++] = child->inputs[i];
   }
   // FIXME: how do I connect? I think I need to do additional stuff
@@ -1077,11 +1179,11 @@ lida_compute_graph_add_child(struct lida_Compute_Graph* cg, struct lida_Compute_
 int
 lida_compute_graph_set_input(struct lida_Compute_Graph* cg, const char* name, const struct lida_Tensor* tensor)
 {
-  for (int32_t i = 0; i < cg->num_inputs; i++) {
+  for (size_t i = 0; i < cg->num_inputs; i++) {
     struct Node_Input* input = &cg->inputs[i]->u.input;
     if (strcmp(name, input->name)) {
       if (input->rank != tensor->rank) {
-	LOG_ERROR("input tensor rank mismatch");
+	LOG_ERROR("input tensor rank mismatch(%d != %d)", input->rank, tensor->rank);
 	return -1;
       }
       for (int32_t j = 0; j < tensor->rank; j++) {
@@ -1101,13 +1203,35 @@ lida_compute_graph_set_input(struct lida_Compute_Graph* cg, const char* name, co
 void
 lida_compute_graph_forward(struct lida_Compute_Graph* cg)
 {
-  for (int i = 0; i < cg->num_outputs; i++) {
-    eval_compute_node(cg->outputs[i]);
+  for (size_t i = 0; i < cg->num_outputs; i++) {
+    compute_node_clear_output(cg, cg->outputs[i]);
+  }
+  for (size_t i = 0; i < cg->num_outputs; i++) {
+    eval_compute_node(cg, cg->outputs[i]);
+  }
+}
+
+void
+lida_compute_graph_backward(struct lida_Compute_Graph* cg, struct lida_Loss* losses, int count)
+{
+  if (count != (int)cg->num_outputs) {
+    LOG_ERROR("number of losses doesn't match number of outputs in compute graph");
+    return;
+  }
+  for (size_t i = 0; i < cg->num_outputs; i++) {
+    if (cg->outputs[i]->type == NODE_INPUT) {
+      LOG_ERROR("input parameter can't be output");
+    } else if (cg->outputs[i]->type == NODE_PARAMETER) {
+      LOG_WARN("parameter at output of compute graph");
+      cg->outputs[i]->u.param.grad = losses[i].backward(&losses[i]);
+    } else {
+      cg->outputs[i]->u.gate.grad = losses[i].backward(&losses[i]);
+    }
   }
 }
 
 const struct lida_Tensor*
-lida_compute_graph_get_output(struct lida_Compute_Graph* cg, int index)
+lida_compute_graph_get_output(struct lida_Compute_Graph* cg, size_t index)
 {
   if (index >= cg->num_outputs) {
     LOG_ERROR("index is out of bounds(%d >= %d)", index, cg->num_outputs);
@@ -1115,6 +1239,23 @@ lida_compute_graph_get_output(struct lida_Compute_Graph* cg, int index)
   }
 
   return tensor_const_copy(get_node_tensor(cg->outputs[index]));
+}
+
+const struct lida_Tensor*
+lida_compute_graph_get_output_grad(struct lida_Compute_Graph* cg, size_t index)
+{
+  if (index >= cg->num_outputs) {
+    LOG_ERROR("index is out of bounds(%d >= %d)", index, cg->num_outputs);
+    return NULL;
+  }
+
+  struct lida_Tensor* ret;
+  if (cg->outputs[index]->type == NODE_PARAMETER) {
+    return cg->outputs[index]->u.param.grad;
+  } else {
+    return cg->outputs[index]->u.gate.grad;
+  }
+  return tensor_copy(ret);
 }
 
 const struct lida_Gate*
@@ -1145,4 +1286,12 @@ const struct lida_Gate*
 lida_gate_tanh()
 {
   return &g_tanh_gate;
+}
+
+void
+lida_MSE_loss(struct lida_Loss* loss)
+{
+  loss->udata = NULL;
+  loss->forward = MSE_Loss_forward;
+  loss->backward = MSE_Loss_backward;
 }

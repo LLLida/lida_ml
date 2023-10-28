@@ -38,14 +38,17 @@ struct lida_Gate {
   void* udata;
   struct lida_Tensor* (*forward)(void* udata, const struct lida_Tensor** args);
   void (*backward)(void* udata, const struct lida_Tensor* output, struct lida_Tensor** args);
-  int num_args;
+  size_t num_args;
 };
 
 struct lida_Loss {
   void* udata;
-  float (*forward)(struct lida_Loss* self, const struct lida_Tensor* pred, const struct lida_Tensor* actual);
-  void (*backward)(struct lida_Loss* self, struct lida_Tensor* grad);
+  void (*forward)(struct lida_Loss* self, const struct lida_Tensor* pred, const struct lida_Tensor* actual);
+  struct lida_Tensor* (*backward)(struct lida_Loss* self);
+
   float value;
+  const struct lida_Tensor* pred;
+  const struct lida_Tensor* actual;
 };
 
 void lida_ml_init(const struct lida_ML* ml);
@@ -84,8 +87,12 @@ int lida_compute_graph_add_gate(struct lida_Compute_Graph* cg, const struct lida
 int lida_compute_graph_add_child(struct lida_Compute_Graph* cg, struct lida_Compute_Graph* child);
 int lida_compute_graph_set_input(struct lida_Compute_Graph* cg, const char* name, const struct lida_Tensor* tensor);
 void lida_compute_graph_forward(struct lida_Compute_Graph* cg);
+/* number of losses must match number of outputs */
+void lida_compute_graph_backward(struct lida_Compute_Graph* cg, struct lida_Loss* losses, int count);
 /* graph doesn't own returned tensor */
-const struct lida_Tensor* lida_compute_graph_get_output(struct lida_Compute_Graph* cg, int index);
+const struct lida_Tensor* lida_compute_graph_get_output(struct lida_Compute_Graph* cg, size_t index);
+/* FIXME: should I keep this function? Initially I wrote this for debug */
+const struct lida_Tensor* lida_compute_graph_get_output_grad(struct lida_Compute_Graph* cg, size_t index);
 
 const struct lida_Gate* lida_gate_plus();
 const struct lida_Gate* lida_gate_mul();
@@ -93,6 +100,8 @@ const struct lida_Gate* lida_gate_mul();
 const struct lida_Gate* lida_gate_relu();
 const struct lida_Gate* lida_gate_sigmoid();
 const struct lida_Gate* lida_gate_tanh();
+
+void lida_MSE_loss(struct lida_Loss* loss);
 
 #ifdef __cplusplus
 }

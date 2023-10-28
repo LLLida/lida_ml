@@ -42,9 +42,28 @@ int main()
   cg.set_input("a", a)
     .set_input("b", b)
     .forward();
-  auto c = cg.get_output(0);
+  auto c_pred = cg.get_output(0);
 
-  print_tensor(c);
+  print_tensor(c_pred);
+
+  float c_data[] = {
+    2.0, 4.1,
+    5.5, 8.0,
+
+    75.0, 80.0,
+    26.9, 115.0,
+
+    32.0, 100.0,
+    70.0, 4.004
+  };
+  auto c_actual = lida::Tensor(std::span{c_data}, input_shape);
+  print_tensor(c_actual);
+
+  auto loss = lida::Loss::MSE(c_pred, c_actual);
+  cg.backward(loss);
+
+  auto grad = cg.get_output_grad(0);
+  print_tensor(grad);
 
   return 0;
 }

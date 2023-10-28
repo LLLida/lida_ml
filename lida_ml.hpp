@@ -190,6 +190,27 @@ namespace lida {
 
   };
 
+  class Loss {
+
+    lida_Loss raw;
+
+  public:
+
+    [[nodiscard]]
+    float value() const {
+      return raw.value;
+    }
+
+    [[nodiscard]]
+    static auto MSE(const Tensor& pred, const Tensor& y) LIDA_ML_NOEXCEPT {
+      Loss loss;
+      lida_MSE_loss(&loss.raw);
+      loss.raw.forward(&loss.raw, pred.handle(), y.handle());
+      return loss;
+    }
+
+  };
+
   class Compute_Graph {
 
     struct lida_Compute_Graph* raw;
@@ -267,8 +288,24 @@ namespace lida {
       lida_compute_graph_forward(raw);
     }
 
-    lida::Tensor get_output(int index) {
+    void backward(std::span<Loss> losses) LIDA_ML_NOEXCEPT {
+      lida_compute_graph_backward(raw, (lida_Loss*)losses.data(), losses.size());
+    }
+
+    void backward(Loss& loss) LIDA_ML_NOEXCEPT {
+      lida_compute_graph_backward(raw, (lida_Loss*)&loss, 1);
+    }
+
+    lida::Tensor get_output(size_t index) {
       const struct lida_Tensor* handle = lida_compute_graph_get_output(raw, index);
+      if (handle == NULL) {
+	throw std::runtime_error("TODO: failed");
+      }
+      return (struct lida_Tensor*)handle;
+    }
+
+    lida::Tensor get_output_grad(size_t index) {
+      const struct lida_Tensor* handle = lida_compute_graph_get_output_grad(raw, index);
       if (handle == NULL) {
 	throw std::runtime_error("TODO: failed");
       }
