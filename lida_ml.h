@@ -70,6 +70,8 @@ void lida_tensor_fill(struct lida_Tensor* tensor, const void* obj);
 struct lida_Tensor* lida_tensor_transpose(struct lida_Tensor* tensor, const uint32_t dims[], int rank);
 /* O(1) */
 struct lida_Tensor* lida_tensor_slice(struct lida_Tensor* tensor, const uint32_t left[], const uint32_t right[], int rank);
+/* O(1). makes a copy of tensor without copying it's data */
+struct lida_Tensor* lida_tensor_copy(struct lida_Tensor* tensor);
 /* makes a deep copy of tensor. New data is tightly packed in memory */
 struct lida_Tensor* lida_tensor_deep_copy(struct lida_Tensor* tensor);
 /* does a deep copy if tensor is not packed in memory */
@@ -93,15 +95,6 @@ void lida_compute_graph_backward(struct lida_Compute_Graph* cg, struct lida_Loss
 const struct lida_Tensor* lida_compute_graph_get_output(struct lida_Compute_Graph* cg, size_t index);
 /* FIXME: should I keep this function? Initially I wrote this for debug */
 const struct lida_Tensor* lida_compute_graph_get_output_grad(struct lida_Compute_Graph* cg, size_t index);
-
-const struct lida_Gate* lida_gate_plus();
-const struct lida_Gate* lida_gate_mul();
-
-const struct lida_Gate* lida_gate_relu();
-const struct lida_Gate* lida_gate_sigmoid();
-const struct lida_Gate* lida_gate_tanh();
-
-void lida_MSE_loss(struct lida_Loss* loss);
 
 #ifdef __cplusplus
 }

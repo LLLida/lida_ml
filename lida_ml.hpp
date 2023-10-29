@@ -5,6 +5,7 @@
 #include <span>
 
 #include "lida_ml.h"
+#include "lida_ml_basic.h"
 
 #define LIDA_ML_NOEXCEPT noexcept
 

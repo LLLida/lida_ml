@@ -3,7 +3,6 @@
  */
 #include "lida_ml.h"
 
-#include "math.h"
 #include "string.h"
 
 #define ARR_SIZE(arr) (sizeof(arr) / sizeof(arr[0]))
@@ -146,13 +145,6 @@ POOL_DEF(lida_Tensor, 1024);
 static struct lida_ML g_ml;
 POOL_DECL(Allocation);
 POOL_DECL(lida_Tensor);
-
-static struct lida_Gate g_plus_gate;
-static struct lida_Gate g_mul_gate;
-
-static struct lida_Gate g_relu_gate;
-static struct lida_Gate g_sigmoid_gate;
-static struct lida_Gate g_tanh_gate;
 
 #define LOG_DEBUG(...) g_ml.log(0, __VA_ARGS__)
 #define LOG_INFO(...)  g_ml.log(1, __VA_ARGS__)
@@ -299,16 +291,6 @@ tensor_offset(const struct lida_Tensor* tensor, const uint32_t indices[])
   return offset * format_num_bytes(tensor->format);
 }
 
-static struct lida_Tensor*
-tensor_copy(struct lida_Tensor* tensor)
-{
-  struct lida_Tensor* ret = allocate_lida_Tensor();
-  memcpy(ret, tensor, sizeof(struct lida_Tensor));
-  if (tensor->alloc)
-    tensor->alloc->refs++;
-  return ret;
-}
-
 static const struct lida_Tensor*
 tensor_const_copy(const struct lida_Tensor* tensor)
 {
@@ -317,22 +299,6 @@ tensor_const_copy(const struct lida_Tensor* tensor)
   if (tensor->alloc)
     tensor->alloc->refs++;
   return ret;
-}
-
-static int
-compare_tensor_shapes(const struct lida_Tensor* a, const struct lida_Tensor* b)
-{
-  if (a->rank != b->rank) {
-    return (a->rank > b->rank) - (a->rank < b->rank);
-  }
-  for (int32_t i = 0; i < a->rank; i++) {
-    uint32_t x = tdim(a, i).num;
-    uint32_t y = tdim(b, i).num;
-    if (x != y) {
-      return (x > y) - (x < y);
-    }
-  }
-  return 0;
 }
 
 static struct Compute_Node_Arena*
@@ -446,126 +412,6 @@ destroy_compute_node(struct Compute_Node* node)
     }
 }
 
-#define PERFORM_ELEMENTWISE_OP2(a, b, c, type, op) {			\
-  uint32_t indices[LIDA_MAX_DIMENSIONALITY] = {0};			\
-  while (indices[a->rank-1] < a->dims[a->rank-1].num) {	\
-    type* va = lida_tensor_get_unchecked(a, indices);			\
-    type* vb = lida_tensor_get_unchecked(b, indices);			\
-    type* vc = lida_tensor_get_unchecked(c, indices);			\
-    *vc = *va op *vb;							\
-    for (int32_t i = 0; i < a->rank; i++) {			\
-      indices[i]++;							\
-      if (indices[i] == a->dims[i].num && i < a->rank-1) {	\
-	indices[i] = 0;							\
-      } else {								\
-	break;								\
-      }									\
-    }									\
-  }									\
-  }
-
-static struct lida_Tensor*
-plus_gate_forward(void* udata, const struct lida_Tensor** args)
-{
-  (void)udata;
-
-  const struct lida_Tensor* a = args[0];
-  const struct lida_Tensor* b = args[1];
-  if (compare_tensor_shapes(a, b) != 0) {
-    LOG_ERROR("+: tensors must be the same shape");
-    return NULL;
-  }
-  if (a->format != b->format) {
-    LOG_ERROR("+: tensors must have the same format");
-  }
-
-  uint32_t dims[LIDA_MAX_DIMENSIONALITY];
-  lida_tensor_get_dims(a, dims, NULL);
-  struct lida_Tensor* c = lida_tensor_create(dims, a->rank, a->format);
-
-  switch (a->format)
-    {
-    case LIDA_FORMAT_I32:
-      PERFORM_ELEMENTWISE_OP2(a, b, c, int32_t, +);
-      break;
-    case LIDA_FORMAT_U32:
-      PERFORM_ELEMENTWISE_OP2(a, b, c, uint32_t, +);
-      break;
-    case LIDA_FORMAT_F32:
-      PERFORM_ELEMENTWISE_OP2(a, b, c, float, +);
-      break;
-    default:
-      LOG_ERROR("+ on this format is not supported");
-      lida_tensor_destroy(c);
-      return NULL;
-    }
-  return c;
-}
-
-static void
-plus_gate_backward(void* udata, const struct lida_Tensor* output, struct lida_Tensor** args)
-{
-  (void)udata;
-  (void)output;
-  (void)args;
-}
-
-static void
-MSE_Loss_forward(struct lida_Loss* self, const struct lida_Tensor* pred, const struct lida_Tensor* actual)
-{
-  if (compare_tensor_shapes(pred, actual) != 0) {
-    LOG_ERROR("MSE loss: tensors must be the same shape");
-    return;
-  }
-  self->value = 0.0;
-  self->pred = pred;
-  self->actual = actual;
-  uint32_t indices[LIDA_MAX_DIMENSIONALITY];
-  while (indices[pred->rank-1] < tdim(pred, pred->rank-1).num) {
-    float* y1 = lida_tensor_get_unchecked(pred, indices);
-    float* y2 = lida_tensor_get_unchecked(actual, indices);
-    float d = y1-y2;
-    self->value += d*d;
-    for (int i = 0; i < pred->rank; i++) {
-      indices[i]++;
-      if (indices[i] == tdim(pred, i).num) {
-	if (i != pred->rank-1)
-	  indices[i] = 0;
-      } else {
-	break;
-      }
-    }
-  }
-}
-
-static struct lida_Tensor*
-MSE_Loss_backward(struct lida_Loss* self)
-{
-  uint32_t dims[LIDA_MAX_DIMENSIONALITY];
-  int rank;
-  lida_tensor_get_dims(self->pred, dims, &rank);
-
-  struct lida_Tensor* grad = lida_tensor_create(dims, rank, self->pred->format);
-  uint32_t indices[LIDA_MAX_DIMENSIONALITY];
-  while (indices[rank-1] < tdim(self->pred, rank-1).num) {
-    float* y1 = lida_tensor_get_unchecked(self->pred, indices);
-    float* y2 = lida_tensor_get_unchecked(self->actual, indices);
-    float* g = lida_tensor_get_unchecked(grad, indices);
-    *g = 2 * fabs(*y2 - *y1);
-    for (int i = 0; i < rank; i++) {
-      indices[i]++;
-      if (indices[i] == dims[i]) {
-	if (i != rank-1)
-	  indices[i] = 0;
-      } else {
-	break;
-      }
-    }
-  }
-  return grad;
-}
-
-
 
 /// library functions
 
@@ -573,13 +419,6 @@ void
 lida_ml_init(const struct lida_ML* ml)
 {
   memcpy(&g_ml, ml, sizeof(struct lida_ML));
-
-  g_plus_gate = (struct lida_Gate) {
-    .name = "+",
-    .forward = &plus_gate_forward,
-    .backward = &plus_gate_backward,
-    .num_args = 2
-  };
 }
 
 void
@@ -813,7 +652,7 @@ lida_tensor_transpose(struct lida_Tensor* tensor, const uint32_t dims[], int ran
   }
   // TODO: check for duplicates in dims
 
-  struct lida_Tensor* ret = tensor_copy(tensor);
+  struct lida_Tensor* ret = lida_tensor_copy(tensor);
   for (int i = 0; i < rank; i++) {
     ret->dims[tensor->dims[i].index].index = dims[i];
   }
@@ -839,11 +678,21 @@ lida_tensor_slice(struct lida_Tensor* tensor, const uint32_t left[], const uint3
     }
   }
 
-  struct lida_Tensor* ret = tensor_copy(tensor);
+  struct lida_Tensor* ret = lida_tensor_copy(tensor);
   ret->cpu_mem = (uint8_t*)ret->cpu_mem + tensor_offset(tensor, left);
   for (int i = 0; i < rank; i++) {
     tdim(ret, i).num = right[i] - left[i];
   }
+  return ret;
+}
+
+struct lida_Tensor*
+lida_tensor_copy(struct lida_Tensor* tensor)
+{
+  struct lida_Tensor* ret = allocate_lida_Tensor();
+  memcpy(ret, tensor, sizeof(struct lida_Tensor));
+  if (tensor->alloc)
+    tensor->alloc->refs++;
   return ret;
 }
 
@@ -912,7 +761,7 @@ lida_tensor_reshape(struct lida_Tensor* tensor, const uint32_t dims[], int rank)
   if (tensor->rank != seq_full_rank(tensor)) {
     ret = lida_tensor_deep_copy(tensor);
   } else {
-    ret = tensor_copy(tensor);
+    ret = lida_tensor_copy(tensor);
   }
 
   ret->rank = rank;
@@ -1012,7 +861,7 @@ lida_tensor_rot90(struct lida_Tensor* tensor, uint32_t ax1, uint32_t ax2, int n)
 
   n = python_mod(n, 4);
   if (n == 0) {
-    return tensor_copy(tensor);
+    return lida_tensor_copy(tensor);
   }
 
   uint32_t bytes_per_elem = format_num_bytes(tensor->format);
@@ -1220,7 +1069,7 @@ lida_compute_graph_backward(struct lida_Compute_Graph* cg, struct lida_Loss* los
   }
   for (size_t i = 0; i < cg->num_outputs; i++) {
     if (cg->outputs[i]->type == NODE_INPUT) {
-      LOG_ERROR("input parameter can't be output");
+      LOG_ERROR("input parameter can't be at output of compute graph");
     } else if (cg->outputs[i]->type == NODE_PARAMETER) {
       LOG_WARN("parameter at output of compute graph");
       cg->outputs[i]->u.param.grad = losses[i].backward(&losses[i]);
@@ -1251,47 +1100,9 @@ lida_compute_graph_get_output_grad(struct lida_Compute_Graph* cg, size_t index)
 
   struct lida_Tensor* ret;
   if (cg->outputs[index]->type == NODE_PARAMETER) {
-    return cg->outputs[index]->u.param.grad;
+    ret = cg->outputs[index]->u.param.grad;
   } else {
-    return cg->outputs[index]->u.gate.grad;
+    ret = cg->outputs[index]->u.gate.grad;
   }
-  return tensor_copy(ret);
-}
-
-const struct lida_Gate*
-lida_gate_plus()
-{
-  return &g_plus_gate;
-}
-
-const struct lida_Gate*
-lida_gate_mul()
-{
-  return &g_mul_gate;
-}
-
-const struct lida_Gate*
-lida_gate_relu()
-{
-  return &g_relu_gate;
-}
-
-const struct lida_Gate*
-lida_gate_sigmoid()
-{
-  return &g_sigmoid_gate;
-}
-
-const struct lida_Gate*
-lida_gate_tanh()
-{
-  return &g_tanh_gate;
-}
-
-void
-lida_MSE_loss(struct lida_Loss* loss)
-{
-  loss->udata = NULL;
-  loss->forward = MSE_Loss_forward;
-  loss->backward = MSE_Loss_backward;
+  return lida_tensor_copy(ret);
 }

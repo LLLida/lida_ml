@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.10)
 project(LIDA_ML VERSION 0.1)
 
-add_library(lida_ml STATIC "lida_ml.c" "lida_ml.h" "lida_ml.hpp")
+add_library(lida_ml STATIC "lida_ml.c" "lida_ml.h" "lida_ml_basic.c" "lida_ml_basic.h" "lida_ml.hpp")
 
 target_include_directories(lida_ml PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>)
