@@ -87,12 +87,13 @@ plus_gate_forward(void* udata, const struct lida_Tensor** args)
 }
 
 static void
-plus_gate_backward(void* udata, const struct lida_Tensor* output, struct lida_Tensor** args)
+plus_gate_backward(void* udata, const struct lida_Tensor* output, const struct lida_Tensor* args[], struct lida_Tensor* grads[])
 {
   (void)udata;
+  (void)args;
 
-  args[0] = lida_tensor_copy((struct lida_Tensor*)output);
-  args[1] = lida_tensor_copy((struct lida_Tensor*)output);
+  if (args[0]) grads[0] = lida_tensor_copy((struct lida_Tensor*)output);
+  if (args[1]) grads[1] = lida_tensor_copy((struct lida_Tensor*)output);
 }
 
 static void

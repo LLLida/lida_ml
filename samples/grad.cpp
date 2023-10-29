@@ -59,6 +59,7 @@ int main()
   auto c_actual = lida::Tensor(std::span{c_data}, input_shape);
   print_tensor(c_actual);
 
+  cg.zero_grad();
   auto loss = lida::Loss::MSE(c_pred, c_actual);
   cg.backward(loss);
 

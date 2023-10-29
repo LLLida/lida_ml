@@ -289,6 +289,10 @@ namespace lida {
       lida_compute_graph_forward(raw);
     }
 
+    void zero_grad() LIDA_ML_NOEXCEPT {
+      lida_compute_graph_zero_grad(raw);
+    }
+
     void backward(std::span<Loss> losses) LIDA_ML_NOEXCEPT {
       lida_compute_graph_backward(raw, (lida_Loss*)losses.data(), losses.size());
     }

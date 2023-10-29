@@ -37,7 +37,7 @@ struct lida_Gate {
   const char* name;
   void* udata;
   struct lida_Tensor* (*forward)(void* udata, const struct lida_Tensor** args);
-  void (*backward)(void* udata, const struct lida_Tensor* output, struct lida_Tensor** args);
+  void (*backward)(void* udata, const struct lida_Tensor* output, const struct lida_Tensor* args[], struct lida_Tensor* grads[]);
   size_t num_args;
 };
 
@@ -70,6 +70,7 @@ void lida_tensor_fill(struct lida_Tensor* tensor, const void* obj);
 struct lida_Tensor* lida_tensor_transpose(struct lida_Tensor* tensor, const uint32_t dims[], int rank);
 /* O(1) */
 struct lida_Tensor* lida_tensor_slice(struct lida_Tensor* tensor, const uint32_t left[], const uint32_t right[], int rank);
+struct lida_Tensor* lida_tensor_alike(const struct lida_Tensor* tensor);
 /* O(1). makes a copy of tensor without copying it's data */
 struct lida_Tensor* lida_tensor_copy(struct lida_Tensor* tensor);
 /* makes a deep copy of tensor. New data is tightly packed in memory */
@@ -89,6 +90,7 @@ int lida_compute_graph_add_gate(struct lida_Compute_Graph* cg, const struct lida
 int lida_compute_graph_add_child(struct lida_Compute_Graph* cg, struct lida_Compute_Graph* child);
 int lida_compute_graph_set_input(struct lida_Compute_Graph* cg, const char* name, const struct lida_Tensor* tensor);
 void lida_compute_graph_forward(struct lida_Compute_Graph* cg);
+void lida_compute_graph_zero_grad(struct lida_Compute_Graph* cg);
 /* number of losses must match number of outputs */
 void lida_compute_graph_backward(struct lida_Compute_Graph* cg, struct lida_Loss* losses, int count);
 /* graph doesn't own returned tensor */

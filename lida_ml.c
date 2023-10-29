@@ -301,6 +301,91 @@ tensor_const_copy(const struct lida_Tensor* tensor)
   return ret;
 }
 
+// NOTE: no checking
+static void
+tensor_add(struct lida_Tensor* a, struct lida_Tensor* b)
+{
+  uint32_t indices[LIDA_MAX_DIMENSIONALITY] = {0};
+
+  switch (a->format)
+    {
+    case LIDA_FORMAT_I32:
+      while (indices[a->rank-1] < tdim(a, a->rank-1).num) {
+	int32_t* va = lida_tensor_get_unchecked(a, indices);
+	int32_t* vb = lida_tensor_get_unchecked(b, indices);
+	*va += *vb;
+	for (int32_t i = 0; i < a->rank; i++) {
+	  indices[i]++;
+	  if (indices[i] == tdim(a, i).num && i < a->rank-1) {
+	    indices[i] = 0;
+	  } else {
+	    break;
+	  }
+	}
+      }
+      break;
+    case LIDA_FORMAT_U32:
+      while (indices[a->rank-1] < tdim(a, a->rank-1).num) {
+	uint32_t* va = lida_tensor_get_unchecked(a, indices);
+	uint32_t* vb = lida_tensor_get_unchecked(b, indices);
+	*va += *vb;
+	for (int32_t i = 0; i < a->rank; i++) {
+	  indices[i]++;
+	  if (indices[i] == tdim(a, i).num && i < a->rank-1) {
+	    indices[i] = 0;
+	  } else {
+	    break;
+	  }
+	}
+      }
+      break;
+    case LIDA_FORMAT_F32:
+      while (indices[a->rank-1] < tdim(a, a->rank-1).num) {
+	float* va = lida_tensor_get_unchecked(a, indices);
+	float* vb = lida_tensor_get_unchecked(b, indices);
+	*va += *vb;
+	for (int32_t i = 0; i < a->rank; i++) {
+	  indices[i]++;
+	  if (indices[i] == tdim(a, i).num && i < a->rank-1) {
+	    indices[i] = 0;
+	  } else {
+	    break;
+	  }
+	}
+      }
+      break;
+    default:
+      LOG_ERROR("+ on this format is not supported");
+    }
+}
+
+static void
+tensor_mul(struct lida_Tensor* a, struct lida_Tensor* b)
+{
+  uint32_t indices[LIDA_MAX_DIMENSIONALITY] = {0};
+
+  switch (a->format)
+    {
+    case LIDA_FORMAT_F32:
+      while (indices[a->rank-1] < tdim(a, a->rank-1).num) {
+	float* va = lida_tensor_get_unchecked(a, indices);
+	float* vb = lida_tensor_get_unchecked(b, indices);
+	*va *= *vb;
+	for (int32_t i = 0; i < a->rank; i++) {
+	  indices[i]++;
+	  if (indices[i] == tdim(a, i).num && i < a->rank-1) {
+	    indices[i] = 0;
+	  } else {
+	    break;
+	  }
+	}
+      }
+      break;
+    default:
+      LOG_ERROR("* on this format is not supported");
+    }
+}
+
 static struct Compute_Node_Arena*
 allocate_compute_node_arena(size_t size)
 {
@@ -353,6 +438,18 @@ get_node_tensor(struct Compute_Node* node)
   }
 }
 
+static struct lida_Tensor*
+get_node_grad(struct Compute_Node* node)
+{
+  if (node->type == NODE_INPUT) {
+    return NULL;
+  } else if (node->type == NODE_PARAMETER) {
+    return node->u.param.grad;
+  } else {
+    return node->u.gate.grad;
+  }
+}
+
 static void
 compute_node_clear_output(struct lida_Compute_Graph* cg, struct Compute_Node* node)
 {
@@ -364,17 +461,48 @@ compute_node_clear_output(struct lida_Compute_Graph* cg, struct Compute_Node* no
     lida_tensor_destroy(gate->output);
     gate->output = NULL;
   }
-  if (gate->grad) {
-    lida_tensor_destroy(gate->grad);
-    gate->grad = NULL;
-  }
   for (size_t i = 0; i < gate->gate->num_args; i++) {
     compute_node_clear_output(cg, get_node_by_id(cg, gate->first_id + i));
   }
 }
 
 static void
-eval_compute_node(struct lida_Compute_Graph* cg, struct Compute_Node* node)
+compute_node_zero_grad(struct lida_Compute_Graph* cg, struct Compute_Node* node)
+{
+  if (node->type == NODE_INPUT)
+    return;
+
+  // FIXME: should we early exit if we already zero'ed this node? if
+  // yes than how we now this node is already zeros?
+  if (node->type == NODE_GATE) {
+    struct Node_Gate* gate = &node->u.gate;
+    if (gate->grad == NULL) {
+      int rank;
+      uint32_t dims[LIDA_MAX_DIMENSIONALITY];
+      lida_Format format = lida_tensor_get_format(gate->output);
+      lida_tensor_get_dims(gate->output, dims, &rank);
+      gate->grad = lida_tensor_create(dims, rank, format);
+    }
+    lida_tensor_fill_zeros(gate->grad);
+
+    for (size_t i = 0; i < gate->gate->num_args; i++) {
+      compute_node_zero_grad(cg, get_node_by_id(cg, gate->first_id + i));
+    }
+  } else if (node->type == NODE_PARAMETER) {
+    struct Node_Parameter* param = &node->u.param;
+    if (param->grad == NULL) {
+      int rank;
+      uint32_t dims[LIDA_MAX_DIMENSIONALITY];
+      lida_Format format = lida_tensor_get_format(param->value);
+      lida_tensor_get_dims(param->value, dims, &rank);
+      param->grad = lida_tensor_create(dims, rank, format);
+    }
+    lida_tensor_fill_zeros(param->grad);
+  }
+}
+
+static void
+forward_compute_node(struct lida_Compute_Graph* cg, struct Compute_Node* node)
 {
   if (node->type == NODE_INPUT || node->type == NODE_PARAMETER)
     return;
@@ -385,10 +513,38 @@ eval_compute_node(struct lida_Compute_Graph* cg, struct Compute_Node* node)
   const struct lida_Tensor* outputs[4];
   for (size_t i = 0; i < gate->gate->num_args; i++) {
     struct Compute_Node* arg = get_node_by_id(cg, gate->first_id + i);
-    eval_compute_node(cg, arg);
+    forward_compute_node(cg, arg);
     outputs[i] = get_node_tensor(arg);
   }
   gate->output = gate->gate->forward(gate->gate->udata, outputs);
+}
+
+static void
+backward_layer(struct lida_Compute_Graph* cg, struct Node_Gate* layer)
+{
+  size_t count = layer->gate->num_args;
+  const struct lida_Tensor* args[count];
+  struct lida_Tensor* grads[count];
+
+  for (size_t i = 0; i < count; i++) {
+    struct Compute_Node* node = get_node_by_id(cg, layer->first_id+i);
+    if (node->type == NODE_INPUT) {
+      args[i] = NULL;
+    } else {
+      args[i] = get_node_tensor(node);
+    }
+  }
+  // compute gradients
+  layer->gate->backward((struct lida_Gate*)layer->gate, layer->output, args, grads);
+  // add gradients
+  for (size_t i = 0; i < count; i++) {
+    struct Compute_Node* node = get_node_by_id(cg, layer->first_id+i);
+    struct lida_Tensor* grad = get_node_grad(node);
+    if (grad) {
+      tensor_add(grad, grads[i]);
+      lida_tensor_destroy(grads[i]);
+    }
+  }
 }
 
 static void
@@ -687,6 +843,14 @@ lida_tensor_slice(struct lida_Tensor* tensor, const uint32_t left[], const uint3
 }
 
 struct lida_Tensor*
+lida_tensor_alike(const struct lida_Tensor* tensor)
+{
+  uint32_t dims[LIDA_MAX_DIMENSIONALITY];
+  lida_tensor_get_dims(tensor, dims, NULL);
+  return lida_tensor_create(dims, tensor->rank, tensor->format);
+}
+
+struct lida_Tensor*
 lida_tensor_copy(struct lida_Tensor* tensor)
 {
   struct lida_Tensor* ret = allocate_lida_Tensor();
@@ -699,9 +863,7 @@ lida_tensor_copy(struct lida_Tensor* tensor)
 struct lida_Tensor*
 lida_tensor_deep_copy(struct lida_Tensor* tensor)
 {
-  uint32_t dims[LIDA_MAX_DIMENSIONALITY];
-  lida_tensor_get_dims(tensor, dims, NULL);
-  struct lida_Tensor* ret = lida_tensor_create(dims, tensor->rank, tensor->format);
+  struct lida_Tensor* ret = lida_tensor_alike(tensor);
 
   int32_t seq = seq_full_rank(tensor);
   uint32_t mag = format_num_bytes(tensor->format);
@@ -1056,7 +1218,15 @@ lida_compute_graph_forward(struct lida_Compute_Graph* cg)
     compute_node_clear_output(cg, cg->outputs[i]);
   }
   for (size_t i = 0; i < cg->num_outputs; i++) {
-    eval_compute_node(cg, cg->outputs[i]);
+    forward_compute_node(cg, cg->outputs[i]);
+  }
+}
+
+void
+lida_compute_graph_zero_grad(struct lida_Compute_Graph* cg)
+{
+  for (size_t i = 0; i < cg->num_outputs; i++) {
+    compute_node_zero_grad(cg, cg->outputs[i]);
   }
 }
 
@@ -1068,14 +1238,12 @@ lida_compute_graph_backward(struct lida_Compute_Graph* cg, struct lida_Loss* los
     return;
   }
   for (size_t i = 0; i < cg->num_outputs; i++) {
-    if (cg->outputs[i]->type == NODE_INPUT) {
-      LOG_ERROR("input parameter can't be at output of compute graph");
-    } else if (cg->outputs[i]->type == NODE_PARAMETER) {
-      LOG_WARN("parameter at output of compute graph");
-      cg->outputs[i]->u.param.grad = losses[i].backward(&losses[i]);
-    } else {
-      cg->outputs[i]->u.gate.grad = losses[i].backward(&losses[i]);
-    }
+    struct lida_Tensor* grad = losses[i].backward(&losses[i]);
+    tensor_add(get_node_grad(cg->outputs[i]), grad);
+    lida_tensor_destroy(grad);
+  }
+  for (struct Node_Gate* layer = cg->last_layer; layer; layer = layer->left) {
+    backward_layer(cg, layer);
   }
 }
 
