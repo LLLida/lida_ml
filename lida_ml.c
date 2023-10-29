@@ -535,7 +535,7 @@ backward_layer(struct lida_Compute_Graph* cg, struct Node_Gate* layer)
     }
   }
   // compute gradients
-  layer->gate->backward((struct lida_Gate*)layer->gate, layer->output, args, grads);
+  layer->gate->backward((struct lida_Gate*)layer->gate, layer->grad, args, grads);
   // add gradients
   for (size_t i = 0; i < count; i++) {
     struct Compute_Node* node = get_node_by_id(cg, layer->first_id+i);
@@ -1062,6 +1062,45 @@ lida_tensor_rot90(struct lida_Tensor* tensor, uint32_t ax1, uint32_t ax2, int n)
   return ret;
 }
 
+int
+lida_tensor_add(struct lida_Tensor* tensor, struct lida_Tensor* other, float scalar)
+{
+  if (tensor->rank != other->rank) {
+    LOG_ERROR("tensors do not have same rank");
+    return -1;
+  }
+  for (int32_t i = 0; i < tensor->rank; i++) {
+    if (tdim(tensor, i).num != tdim(other, i).num) {
+      LOG_ERROR("tensor dimension mismatch");
+      return -1;
+    }
+  }
+  if (tensor->format != other->format) {
+    LOG_ERROR("tensors do not have same format");
+    return -1;
+  }
+  if (tensor->format != LIDA_FORMAT_F32) {
+    LOG_ERROR("tensor addition is only supported for floats");
+    return -1;
+  }
+
+  uint32_t indices[LIDA_MAX_DIMENSIONALITY] = {0};
+  while (indices[tensor->rank-1] < tdim(tensor, tensor->rank-1).num) {
+    float* a = lida_tensor_get_unchecked(tensor, indices);
+    float* b = lida_tensor_get_unchecked(other, indices);
+    *a += *b * scalar;
+    for (int32_t i = 0; i < tensor->rank; i++) {
+      indices[i]++;
+      if (indices[i] == tdim(tensor, i).num && i < tensor->rank-1) {
+	indices[i] = 0;
+      } else {
+	break;
+      }
+    }
+  }
+  return 0;
+}
+
 struct lida_Compute_Graph*
 lida_compute_graph_create(int requires_grad)
 {
@@ -1192,7 +1231,7 @@ lida_compute_graph_set_input(struct lida_Compute_Graph* cg, const char* name, co
 {
   for (size_t i = 0; i < cg->num_inputs; i++) {
     struct Node_Input* input = &cg->inputs[i]->u.input;
-    if (strcmp(name, input->name)) {
+    if (strcmp(name, input->name) == 0) {
       if (input->rank != tensor->rank) {
 	LOG_ERROR("input tensor rank mismatch(%d != %d)", input->rank, tensor->rank);
 	return -1;
@@ -1258,19 +1297,13 @@ lida_compute_graph_get_output(struct lida_Compute_Graph* cg, size_t index)
   return tensor_const_copy(get_node_tensor(cg->outputs[index]));
 }
 
-const struct lida_Tensor*
-lida_compute_graph_get_output_grad(struct lida_Compute_Graph* cg, size_t index)
+void
+lida_compute_graph_optimizer_step(struct lida_Compute_Graph* cg, struct lida_Optimizer* opt)
 {
-  if (index >= cg->num_outputs) {
-    LOG_ERROR("index is out of bounds(%d >= %d)", index, cg->num_outputs);
-    return NULL;
+  for (size_t id = cg->node_counter; id > 0; id--) {
+    struct Compute_Node* node = get_node_by_id(cg, id-1);
+    if (node->type == NODE_PARAMETER) {
+      opt->step(opt, node->u.param.value, node->u.param.grad);
+    }
   }
-
-  struct lida_Tensor* ret;
-  if (cg->outputs[index]->type == NODE_PARAMETER) {
-    ret = cg->outputs[index]->u.param.grad;
-  } else {
-    ret = cg->outputs[index]->u.gate.grad;
-  }
-  return lida_tensor_copy(ret);
 }

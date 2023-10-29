@@ -51,6 +51,11 @@ struct lida_Loss {
   const struct lida_Tensor* actual;
 };
 
+struct lida_Optimizer {
+  void* udata;
+  void (*step)(struct lida_Optimizer* self, struct lida_Tensor* param, const struct lida_Tensor* grad);
+};
+
 void lida_ml_init(const struct lida_ML* ml);
 void lida_ml_done();
 struct lida_Tensor* lida_tensor_create(const uint32_t dims[], int rank, lida_Format format);
@@ -81,6 +86,8 @@ struct lida_Tensor* lida_tensor_reshape(struct lida_Tensor* tensor, const uint32
 struct lida_Tensor* lida_tensor_flip(struct lida_Tensor* tensor, const uint32_t axes[], int num_axes);
 /* counter-clockwise rotation for n*90 degrees */
 struct lida_Tensor* lida_tensor_rot90(struct lida_Tensor* tensor, uint32_t ax1, uint32_t ax2, int n);
+/* add tensor multiplied by a scalar to other tensor */
+int lida_tensor_add(struct lida_Tensor* tensor, struct lida_Tensor* other, float scalar);
 
 struct lida_Compute_Graph* lida_compute_graph_create(int requires_grad);
 void lida_compute_graph_destroy(struct lida_Compute_Graph* cg);
@@ -95,8 +102,7 @@ void lida_compute_graph_zero_grad(struct lida_Compute_Graph* cg);
 void lida_compute_graph_backward(struct lida_Compute_Graph* cg, struct lida_Loss* losses, int count);
 /* graph doesn't own returned tensor */
 const struct lida_Tensor* lida_compute_graph_get_output(struct lida_Compute_Graph* cg, size_t index);
-/* FIXME: should I keep this function? Initially I wrote this for debug */
-const struct lida_Tensor* lida_compute_graph_get_output_grad(struct lida_Compute_Graph* cg, size_t index);
+void lida_compute_graph_optimizer_step(struct lida_Compute_Graph* cg, struct lida_Optimizer* opt);
 
 #ifdef __cplusplus
 }

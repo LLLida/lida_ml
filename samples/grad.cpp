@@ -10,12 +10,6 @@ int main()
       .log     = log_func
   });
 
-  uint32_t input_shape[3] = { 2, 2, 3 };
-  lida::Compute_Graph cg{};
-  cg.add_input("a", input_shape)
-    .add_input("b", input_shape)
-    .add_gate(lida::plus());
-
   float a_data[] = {
     1.0, 2.0,
     3.0, 4.0,
@@ -36,15 +30,15 @@ int main()
     15.0, -1.0,
     69.69, 0.001,
   };
+  uint32_t input_shape[3] = { 2, 2, 3 };
   auto a = lida::Tensor(std::span{a_data}, input_shape);
   auto b = lida::Tensor(std::span{b_data}, input_shape);
 
-  cg.set_input("a", a)
-    .set_input("b", b)
-    .forward();
-  auto c_pred = cg.get_output(0);
-
-  print_tensor(c_pred);
+  lida::Compute_Graph cg{};
+  cg.add_input("a", input_shape)
+    // .add_input("b", input_shape)
+    .add_parameter(b)
+    .add_gate(lida::plus());
 
   float c_data[] = {
     2.0, 4.1,
@@ -59,12 +53,21 @@ int main()
   auto c_actual = lida::Tensor(std::span{c_data}, input_shape);
   print_tensor(c_actual);
 
-  cg.zero_grad();
-  auto loss = lida::Loss::MSE(c_pred, c_actual);
-  cg.backward(loss);
+  cg.set_input("a", a);
 
-  auto grad = cg.get_output_grad(0);
-  print_tensor(grad);
+  lida::SGD_Optimizer optim(0.1);
+  for (int i = 0; i < 5; i++) {
+    cg.forward();
+    auto c_pred = cg.get_output(0);
+    print_tensor(c_pred);
+
+    auto loss = lida::Loss::MSE(c_pred, c_actual);
+    printf("MSE loss is %.3f\n", loss.value());
+
+    cg.zero_grad()
+      .backward(loss)
+      .optimizer_step(optim);
+  }
 
   return 0;
 }

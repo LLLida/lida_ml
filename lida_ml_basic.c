@@ -115,7 +115,7 @@ MSE_Loss_forward(struct lida_Loss* self, const struct lida_Tensor* pred, const s
   while (indices[rank-1] < dims[rank-1]) {
     float* y1 = lida_tensor_get_unchecked(pred, indices);
     float* y2 = lida_tensor_get_unchecked(actual, indices);
-    float d = y1-y2;
+    float d = *y1-*y2;
     self->value += d*d;
     for (int i = 0; i < rank; i++) {
       indices[i]++;

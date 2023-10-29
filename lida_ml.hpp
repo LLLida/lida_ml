@@ -189,6 +189,12 @@ namespace lida {
       return lida_tensor_rot90(raw, ax1, ax2, n);
     }
 
+    void add(const Tensor& other, float scalar = 1.0) {
+      if (lida_tensor_add(raw, other.raw, scalar) != 0) {
+	throw std::runtime_error("failed to add tensors");
+      }
+    }
+
   };
 
   class Loss {
@@ -207,7 +213,36 @@ namespace lida {
       Loss loss;
       lida_MSE_loss(&loss.raw);
       loss.raw.forward(&loss.raw, pred.handle(), y.handle());
+      // printf("loss is %f\n", loss.raw.value);
       return loss;
+    }
+
+  };
+
+  class Basic_Optimizer {
+
+    lida_Optimizer raw;
+
+    static void step_wrapper(lida_Optimizer* self, struct lida_Tensor* param, const struct lida_Tensor* grad) LIDA_ML_NOEXCEPT {
+      auto obj = (Basic_Optimizer*)self->udata;
+      obj->step(*(Tensor*)&param, *(const Tensor*)&grad);
+    }
+
+  protected:
+    virtual void step(Tensor& param, const Tensor& grad) = 0;
+
+    Basic_Optimizer() LIDA_ML_NOEXCEPT {
+      raw.udata = (void*)this;
+      raw.step = step_wrapper;
+    }
+
+  public:
+    Basic_Optimizer(const Basic_Optimizer& other) = delete;
+    Basic_Optimizer(Basic_Optimizer&& other) = delete;
+
+    [[nodiscard]]
+    auto handle() LIDA_ML_NOEXCEPT {
+      return &raw;
     }
 
   };
@@ -289,18 +324,22 @@ namespace lida {
       lida_compute_graph_forward(raw);
     }
 
-    void zero_grad() LIDA_ML_NOEXCEPT {
+    Compute_Graph& zero_grad() LIDA_ML_NOEXCEPT {
       lida_compute_graph_zero_grad(raw);
+      return *this;
     }
 
-    void backward(std::span<Loss> losses) LIDA_ML_NOEXCEPT {
+    Compute_Graph& backward(std::span<Loss> losses) LIDA_ML_NOEXCEPT {
       lida_compute_graph_backward(raw, (lida_Loss*)losses.data(), losses.size());
+      return *this;
     }
 
-    void backward(Loss& loss) LIDA_ML_NOEXCEPT {
+    Compute_Graph& backward(Loss& loss) LIDA_ML_NOEXCEPT {
       lida_compute_graph_backward(raw, (lida_Loss*)&loss, 1);
+      return *this;
     }
 
+    [[nodiscard]]
     lida::Tensor get_output(size_t index) {
       const struct lida_Tensor* handle = lida_compute_graph_get_output(raw, index);
       if (handle == NULL) {
@@ -309,12 +348,26 @@ namespace lida {
       return (struct lida_Tensor*)handle;
     }
 
-    lida::Tensor get_output_grad(size_t index) {
-      const struct lida_Tensor* handle = lida_compute_graph_get_output_grad(raw, index);
-      if (handle == NULL) {
-	throw std::runtime_error("TODO: failed");
-      }
-      return (struct lida_Tensor*)handle;
+    Compute_Graph& optimizer_step(Basic_Optimizer& other) {
+      lida_compute_graph_optimizer_step(raw, other.handle());
+      return *this;
+    }
+
+  };
+
+  class SGD_Optimizer : public Basic_Optimizer {
+
+    float lr;
+
+  public:
+
+    SGD_Optimizer(float lr) {
+      this->lr = lr;
+    }
+
+    void step(Tensor& param, const Tensor& grad) override {
+      // param += grad * lr
+      param.add(grad, -lr);
     }
 
   };
