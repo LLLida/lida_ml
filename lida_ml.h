@@ -37,6 +37,7 @@ struct lida_Gate {
   const char* name;
   void* udata;
   struct lida_Tensor* (*forward)(void* udata, const struct lida_Tensor** args);
+  /* NOTE: this function must ADD gradients, not ASSIGN them */
   void (*backward)(void* udata, const struct lida_Tensor* output, const struct lida_Tensor* args[], struct lida_Tensor* grads[]);
   size_t num_args;
 };

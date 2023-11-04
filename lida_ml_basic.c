@@ -92,8 +92,15 @@ plus_gate_backward(void* udata, const struct lida_Tensor* output, const struct l
   (void)udata;
   (void)args;
 
-  if (args[0]) grads[0] = lida_tensor_copy((struct lida_Tensor*)output);
-  if (args[1]) grads[1] = lida_tensor_copy((struct lida_Tensor*)output);
+  for (int i = 0; i < 2; i++)
+    if (grads[i]) {
+      LIDA_TENSOR_ITER_LOOP(grads[i], indices) {
+	float* y = lida_tensor_get_unchecked(output, indices);
+	float* g = lida_tensor_get_unchecked(grads[i], indices);
+	*g += *y;
+	LIDA_TENSOR_ITER_STEP(grads[i], indices);
+      }
+    }
 }
 static struct lida_Tensor*
 relu_gate_forward(void* udata, const struct lida_Tensor** args)
@@ -121,15 +128,13 @@ relu_gate_backward(void* udata, const struct lida_Tensor* output, const struct l
   (void)udata;
   (void)output;
 
-  if (args[0]) {
-    grads[0] = lida_tensor_alike(args[0]);
+  if (grads[0]) {
     LIDA_TENSOR_ITER_LOOP(grads[0], indices) {
       float* x = lida_tensor_get_unchecked(args[0], indices);
       float* g = lida_tensor_get_unchecked(grads[0], indices);
       if (*x > 0.0) {
-	*g = *(float*)lida_tensor_get_unchecked(output, indices);
-      } else {
-	*g = 0.0;
+	float* y = lida_tensor_get_unchecked(output, indices);
+	*g += *y;
       }
       LIDA_TENSOR_ITER_STEP(grads[0], indices);
     }

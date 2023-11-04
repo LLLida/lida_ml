@@ -488,24 +488,11 @@ backward_layer(struct lida_Compute_Graph* cg, struct Node_Gate* layer)
 
   for (size_t i = 0; i < count; i++) {
     struct Compute_Node* node = get_node_by_id(cg, layer->first_id+i);
-    if (node->type == NODE_INPUT) {
-      args[i] = NULL;
-    } else {
-      args[i] = get_node_tensor(node);
-    }
+    args[i] = get_node_tensor(node);
+    grads[i] = get_node_grad(node);
   }
-  // compute gradients
-  layer->gate->backward((struct lida_Gate*)layer->gate, layer->grad, args, grads);
   // add gradients
-  for (size_t i = 0; i < count; i++) {
-    struct Compute_Node* node = get_node_by_id(cg, layer->first_id+i);
-    struct lida_Tensor* grad = get_node_grad(node);
-
-    if (grad) {
-      tensor_add(grad, grads[i]);
-      lida_tensor_destroy(grads[i]);
-    }
-  }
+  layer->gate->backward((struct lida_Gate*)layer->gate, layer->grad, args, grads);
 }
 
 static void
