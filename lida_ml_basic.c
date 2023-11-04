@@ -142,7 +142,7 @@ MSE_Loss_backward(struct lida_Loss* self)
     float* y1 = lida_tensor_get_unchecked(self->pred, indices);
     float* y2 = lida_tensor_get_unchecked(self->actual, indices);
     float* g = lida_tensor_get_unchecked(grad, indices);
-    *g = 2 * fabs(*y2 - *y1);
+    *g = 2.0 * (*y1 - *y2);
     for (int i = 0; i < rank; i++) {
       indices[i]++;
       if (indices[i] == dims[i]) {

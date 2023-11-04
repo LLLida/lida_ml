@@ -36,7 +36,6 @@ int main()
 
   lida::Compute_Graph cg{};
   cg.add_input("a", input_shape)
-    // .add_input("b", input_shape)
     .add_parameter(b)
     .add_gate(lida::plus());
 
@@ -56,13 +55,16 @@ int main()
   cg.set_input("a", a);
 
   lida::SGD_Optimizer optim(0.1);
-  for (int i = 0; i < 5; i++) {
+
+  int epochs = 10;
+  for (int i = 0; i < epochs; i++) {
     cg.forward();
     auto c_pred = cg.get_output(0);
-    print_tensor(c_pred);
 
     auto loss = lida::Loss::MSE(c_pred, c_actual);
     printf("MSE loss is %.3f\n", loss.value());
+    if (i == epochs-1)
+      print_tensor(c_pred);
 
     cg.zero_grad()
       .backward(loss)

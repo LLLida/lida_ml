@@ -5,6 +5,8 @@
 
 #include "string.h"
 
+#include "stdio.h"
+
 #define ARR_SIZE(arr) (sizeof(arr) / sizeof(arr[0]))
 
 struct Dim {
@@ -540,6 +542,7 @@ backward_layer(struct lida_Compute_Graph* cg, struct Node_Gate* layer)
   for (size_t i = 0; i < count; i++) {
     struct Compute_Node* node = get_node_by_id(cg, layer->first_id+i);
     struct lida_Tensor* grad = get_node_grad(node);
+
     if (grad) {
       tensor_add(grad, grads[i]);
       lida_tensor_destroy(grads[i]);
