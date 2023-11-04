@@ -43,12 +43,12 @@ struct lida_Gate {
 
 struct lida_Loss {
   void* udata;
-  void (*forward)(struct lida_Loss* self, const struct lida_Tensor* pred, const struct lida_Tensor* actual);
+  void (*forward)(struct lida_Loss* self, const struct lida_Tensor* pred, const struct lida_Tensor* target);
   struct lida_Tensor* (*backward)(struct lida_Loss* self);
 
   float value;
   const struct lida_Tensor* pred;
-  const struct lida_Tensor* actual;
+  const struct lida_Tensor* target;
 };
 
 struct lida_Optimizer {
@@ -88,6 +88,29 @@ struct lida_Tensor* lida_tensor_flip(struct lida_Tensor* tensor, const uint32_t 
 struct lida_Tensor* lida_tensor_rot90(struct lida_Tensor* tensor, uint32_t ax1, uint32_t ax2, int n);
 /* add tensor multiplied by a scalar to other tensor */
 int lida_tensor_add(struct lida_Tensor* tensor, struct lida_Tensor* other, float scalar);
+
+/* usage:
+    LIDA_TENSOR_ITER_LOOP(tensor, indices) {
+      void* elem = lida_tensor_get_unchecked(tensor, indices);
+      ... do some things
+      LIDA_TENSOR_ITER_STEP(tensor, indices);
+    }
+ */
+#define LIDA_TENSOR_ITER_LOOP(tensor, indices) int32_t rank_lida__;	\
+  uint32_t dims_lida__[LIDA_MAX_DIMENSIONALITY];			\
+  lida_tensor_get_dims(tensor, dims_lida__, &rank_lida__);		\
+  uint32_t indices[LIDA_MAX_DIMENSIONALITY+1] = {0};			\
+  while (indices[rank_lida__] == 0)
+#define LIDA_TENSOR_ITER_STEP(tensor, indices) do {			\
+    for (int32_t i = 0; i <= rank_lida__; i++) {			\
+      indices[i]++;							\
+      if (i != rank_lida__ && indices[i] == dims_lida__[i]) {	\
+	indices[i] = 0;							\
+      } else {								\
+	break;								\
+      }									\
+    }									\
+  } while (0)
 
 struct lida_Compute_Graph* lida_compute_graph_create(int requires_grad);
 void lida_compute_graph_destroy(struct lida_Compute_Graph* cg);

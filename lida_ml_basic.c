@@ -95,38 +95,68 @@ plus_gate_backward(void* udata, const struct lida_Tensor* output, const struct l
   if (args[0]) grads[0] = lida_tensor_copy((struct lida_Tensor*)output);
   if (args[1]) grads[1] = lida_tensor_copy((struct lida_Tensor*)output);
 }
+static struct lida_Tensor*
+relu_gate_forward(void* udata, const struct lida_Tensor** args)
+{
+  (void)udata;
+
+  const struct lida_Tensor* x = args[0];
+  struct lida_Tensor* y = lida_tensor_alike(x);
+  LIDA_TENSOR_ITER_LOOP(y, indices) {
+    float* xi = lida_tensor_get_unchecked(x, indices);
+    float* yi = lida_tensor_get_unchecked(y, indices);
+    if (*xi > 0.0) {
+      *yi = *xi;
+    } else {
+      *yi = 0.0;
+    }
+    LIDA_TENSOR_ITER_STEP(y, indices);
+  }
+  return y;
+}
 
 static void
-MSE_Loss_forward(struct lida_Loss* self, const struct lida_Tensor* pred, const struct lida_Tensor* actual)
+relu_gate_backward(void* udata, const struct lida_Tensor* output, const struct lida_Tensor* args[], struct lida_Tensor* grads[])
 {
-  if (compare_tensor_shapes(pred, actual) != 0) {
+  (void)udata;
+  (void)output;
+
+  if (args[0]) {
+    grads[0] = lida_tensor_alike(args[0]);
+    LIDA_TENSOR_ITER_LOOP(grads[0], indices) {
+      float* x = lida_tensor_get_unchecked(args[0], indices);
+      float* g = lida_tensor_get_unchecked(grads[0], indices);
+      if (*x > 0.0) {
+	*g = *(float*)lida_tensor_get_unchecked(output, indices);
+      } else {
+	*g = 0.0;
+      }
+      LIDA_TENSOR_ITER_STEP(grads[0], indices);
+    }
+  }
+}
+
+static void
+MSE_Loss_forward(struct lida_Loss* self, const struct lida_Tensor* pred, const struct lida_Tensor* target)
+{
+  if (compare_tensor_shapes(pred, target) != 0) {
     // LOG_ERROR("MSE loss: tensors must be the same shape");
     return;
   }
 
-  int rank;
-  uint32_t dims[LIDA_MAX_DIMENSIONALITY];
-  lida_tensor_get_dims(pred, dims, &rank);
-
   self->value = 0.0;
   self->pred = pred;
-  self->actual = actual;
-  uint32_t indices[LIDA_MAX_DIMENSIONALITY];
-  while (indices[rank-1] < dims[rank-1]) {
+  self->target = target;
+
+  LIDA_TENSOR_ITER_LOOP(pred, indices) {
     float* y1 = lida_tensor_get_unchecked(pred, indices);
-    float* y2 = lida_tensor_get_unchecked(actual, indices);
+    float* y2 = lida_tensor_get_unchecked(target, indices);
     float d = *y1-*y2;
     self->value += d*d;
-    for (int i = 0; i < rank; i++) {
-      indices[i]++;
-      if (indices[i] == dims[i]) {
-	if (i != rank-1)
-	  indices[i] = 0;
-      } else {
-	break;
-      }
-    }
+    LIDA_TENSOR_ITER_STEP(pred, indices);
   }
+
+  self->value /= (float)lida_tensor_size(pred);
 }
 
 static struct lida_Tensor*
@@ -136,22 +166,16 @@ MSE_Loss_backward(struct lida_Loss* self)
   int rank;
   lida_tensor_get_dims(self->pred, dims, &rank);
 
+  // float n = (float)lida_tensor_size(self->pred);
+
   struct lida_Tensor* grad = lida_tensor_create(dims, rank, lida_tensor_get_format(self->pred));
-  uint32_t indices[LIDA_MAX_DIMENSIONALITY];
-  while (indices[rank-1] < dims[rank-1]) {
+  LIDA_TENSOR_ITER_LOOP(grad, indices) {
     float* y1 = lida_tensor_get_unchecked(self->pred, indices);
-    float* y2 = lida_tensor_get_unchecked(self->actual, indices);
+    float* y2 = lida_tensor_get_unchecked(self->target, indices);
     float* g = lida_tensor_get_unchecked(grad, indices);
+    // FIXME: should we divide by n?
     *g = 2.0 * (*y1 - *y2);
-    for (int i = 0; i < rank; i++) {
-      indices[i]++;
-      if (indices[i] == dims[i]) {
-	if (i != rank-1)
-	  indices[i] = 0;
-      } else {
-	break;
-      }
-    }
+    LIDA_TENSOR_ITER_STEP(grad, indices);
   }
   return grad;
 }
@@ -189,6 +213,14 @@ lida_gate_mul()
 const struct lida_Gate*
 lida_gate_relu()
 {
+  if (g_relu_gate.name == NULL) {
+    g_relu_gate = (struct lida_Gate) {
+      .name = "ReLU",
+      .forward = &relu_gate_forward,
+      .backward = &relu_gate_backward,
+      .num_args = 1
+    };
+  }
   return &g_relu_gate;
 }
 

@@ -37,7 +37,8 @@ int main()
   lida::Compute_Graph cg{};
   cg.add_input("a", input_shape)
     .add_parameter(b)
-    .add_gate(lida::plus());
+    .add_gate(lida::plus())
+    .add_gate(lida::relu());
 
   float c_data[] = {
     2.0, 4.1,

@@ -5,8 +5,6 @@
 
 #include "string.h"
 
-#include "stdio.h"
-
 #define ARR_SIZE(arr) (sizeof(arr) / sizeof(arr[0]))
 
 struct Dim {
@@ -307,85 +305,45 @@ tensor_const_copy(const struct lida_Tensor* tensor)
 static void
 tensor_add(struct lida_Tensor* a, struct lida_Tensor* b)
 {
-  uint32_t indices[LIDA_MAX_DIMENSIONALITY] = {0};
-
-  switch (a->format)
-    {
-    case LIDA_FORMAT_I32:
-      while (indices[a->rank-1] < tdim(a, a->rank-1).num) {
+  LIDA_TENSOR_ITER_LOOP(a, indices) {
+    switch (a->format)
+      {
+      case LIDA_FORMAT_I32: {
 	int32_t* va = lida_tensor_get_unchecked(a, indices);
 	int32_t* vb = lida_tensor_get_unchecked(b, indices);
 	*va += *vb;
-	for (int32_t i = 0; i < a->rank; i++) {
-	  indices[i]++;
-	  if (indices[i] == tdim(a, i).num && i < a->rank-1) {
-	    indices[i] = 0;
-	  } else {
-	    break;
-	  }
-	}
-      }
-      break;
-    case LIDA_FORMAT_U32:
-      while (indices[a->rank-1] < tdim(a, a->rank-1).num) {
+      } break;
+      case LIDA_FORMAT_U32: {
 	uint32_t* va = lida_tensor_get_unchecked(a, indices);
 	uint32_t* vb = lida_tensor_get_unchecked(b, indices);
 	*va += *vb;
-	for (int32_t i = 0; i < a->rank; i++) {
-	  indices[i]++;
-	  if (indices[i] == tdim(a, i).num && i < a->rank-1) {
-	    indices[i] = 0;
-	  } else {
-	    break;
-	  }
-	}
-      }
-      break;
-    case LIDA_FORMAT_F32:
-      while (indices[a->rank-1] < tdim(a, a->rank-1).num) {
+      } break;
+      case LIDA_FORMAT_F32: {
 	float* va = lida_tensor_get_unchecked(a, indices);
 	float* vb = lida_tensor_get_unchecked(b, indices);
 	*va += *vb;
-	for (int32_t i = 0; i < a->rank; i++) {
-	  indices[i]++;
-	  if (indices[i] == tdim(a, i).num && i < a->rank-1) {
-	    indices[i] = 0;
-	  } else {
-	    break;
-	  }
-	}
+      } break;
+      default:
+	LOG_WARN("undefined format encountered");
       }
-      break;
-    default:
-      LOG_ERROR("+ on this format is not supported");
-    }
+    LIDA_TENSOR_ITER_STEP(a, indices);
+  }
 }
 
 static void
 tensor_mul(struct lida_Tensor* a, struct lida_Tensor* b)
 {
-  uint32_t indices[LIDA_MAX_DIMENSIONALITY] = {0};
+  if (a->format != LIDA_FORMAT_F32) {
+    LOG_ERROR("* on this format is not supported");
+    return;
+  }
 
-  switch (a->format)
-    {
-    case LIDA_FORMAT_F32:
-      while (indices[a->rank-1] < tdim(a, a->rank-1).num) {
-	float* va = lida_tensor_get_unchecked(a, indices);
-	float* vb = lida_tensor_get_unchecked(b, indices);
-	*va *= *vb;
-	for (int32_t i = 0; i < a->rank; i++) {
-	  indices[i]++;
-	  if (indices[i] == tdim(a, i).num && i < a->rank-1) {
-	    indices[i] = 0;
-	  } else {
-	    break;
-	  }
-	}
-      }
-      break;
-    default:
-      LOG_ERROR("* on this format is not supported");
-    }
+  LIDA_TENSOR_ITER_LOOP(a, indices) {
+    float* va = lida_tensor_get_unchecked(a, indices);
+    float* vb = lida_tensor_get_unchecked(b, indices);
+    *va *= *vb;
+    LIDA_TENSOR_ITER_STEP(a, indices);
+  }
 }
 
 static struct Compute_Node_Arena*
@@ -771,9 +729,11 @@ lida_tensor_fill(struct lida_Tensor* tensor, const void* obj)
   uint32_t indices[LIDA_MAX_DIMENSIONALITY] = {0};
   uint32_t bytes_per_elem = format_num_bytes(tensor->format);
   uint8_t* bytes = tensor->cpu_mem;
-  // NOTE: we don't use the tdim macro in here because the order of
-  // dimensions doesn't matter
 
+  // NOTE: we don't use the LIDA_TENSOR_ITER_* macros because the
+  // result of this operation doesn't depend whether tensor is
+  // transposed or not. So we fill values in order they are in memory
+  // for performance.
   while (indices[tensor->rank-1] < tensor->dims[tensor->rank-1].num) {
     // we fill values one by one. This is very slow, it'd be better to
     // do that with intrinsics or smth.
@@ -809,7 +769,14 @@ lida_tensor_transpose(struct lida_Tensor* tensor, const uint32_t dims[], int ran
       return NULL;
     }
   }
-  // TODO: check for duplicates in dims
+  uint32_t counts[LIDA_MAX_DIMENSIONALITY] = {0};
+  for (int i = 0; i < rank; i++) {
+    counts[dims[i]] += 1;
+    if (counts[dims[i]] > 1) {
+      LOG_ERROR("dims has duplicates");
+      return NULL;
+    }
+  }
 
   struct lida_Tensor* ret = lida_tensor_copy(tensor);
   for (int i = 0; i < rank; i++) {
@@ -1087,19 +1054,11 @@ lida_tensor_add(struct lida_Tensor* tensor, struct lida_Tensor* other, float sca
     return -1;
   }
 
-  uint32_t indices[LIDA_MAX_DIMENSIONALITY] = {0};
-  while (indices[tensor->rank-1] < tdim(tensor, tensor->rank-1).num) {
+  LIDA_TENSOR_ITER_LOOP(tensor, indices) {
     float* a = lida_tensor_get_unchecked(tensor, indices);
     float* b = lida_tensor_get_unchecked(other, indices);
     *a += *b * scalar;
-    for (int32_t i = 0; i < tensor->rank; i++) {
-      indices[i]++;
-      if (indices[i] == tdim(tensor, i).num && i < tensor->rank-1) {
-	indices[i] = 0;
-      } else {
-	break;
-      }
-    }
+    LIDA_TENSOR_ITER_STEP(tensor, indices);
   }
   return 0;
 }
