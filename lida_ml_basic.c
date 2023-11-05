@@ -222,7 +222,46 @@ mm_gate_backward(void* udata, const struct lida_Tensor* output, const struct lid
   (void)udata;
   (void)args;
 
+  const struct lida_Tensor* a = args[0];
+  const struct lida_Tensor* W = args[1];
 
+  uint32_t dims[2];
+  lida_tensor_get_dims(W, dims, NULL);
+  const uint32_t width = dims[0], height = dims[1];
+  lida_tensor_get_dims(a, dims, NULL);
+  const uint32_t batches = dims[1];
+
+  if (grads[0]) {
+    /* add W^T y */
+    for (uint32_t k = 0; k < batches; k++)
+      for (uint32_t j = 0; j < height; j++)
+	for (uint32_t i = 0; i < width; i++) {
+	  uint32_t indices[2] = {i, j};
+	  float* w = lida_tensor_get_unchecked(W, indices);
+	  indices[0] = i;
+	  indices[1] = k;
+	  float* da = lida_tensor_get_unchecked(grads[0], indices);
+	  indices[0] = j;
+	  float* y = lida_tensor_get_unchecked(output, indices);
+	  *da += *w * *y;
+	}
+  }
+
+  if (grads[1]) {
+    /* add Jacobi matrices */
+    for (uint32_t k = 0; k < batches; k++)
+      for (uint32_t j = 0; j < height; j++)
+	for (uint32_t i = 0; i < width; i++) {
+	  uint32_t indices[2] = {i, j};
+	  float* dw = lida_tensor_get_unchecked(grads[1], indices);
+	  indices[0] = i;
+	  indices[1] = k;
+	  float* da = lida_tensor_get_unchecked(args[0], indices);
+	  indices[0] = j;
+	  float* y = lida_tensor_get_unchecked(output, indices);
+	  *dw += *da * *y;
+	}
+  }
 }
 
 static struct lida_Tensor*

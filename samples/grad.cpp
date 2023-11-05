@@ -50,8 +50,8 @@ int main()
     32.0, 100.0,
     70.0, 4.004
   };
-  auto c_actual = lida::Tensor(std::span{c_data}, input_shape);
-  print_tensor(c_actual);
+  auto c_target = lida::Tensor(std::span{c_data}, input_shape);
+  print_tensor(c_target);
 
   cg.set_input("a", a);
 
@@ -62,7 +62,7 @@ int main()
     cg.forward();
     auto c_pred = cg.get_output(0);
 
-    auto loss = lida::Loss::MSE(c_pred, c_actual);
+    auto loss = lida::Loss::MSE(c_pred, c_target);
     printf("MSE loss is %.3f\n", loss.value());
     if (i == epochs-1)
       print_tensor(c_pred);

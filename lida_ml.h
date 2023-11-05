@@ -83,6 +83,7 @@ struct lida_Tensor* lida_tensor_copy(struct lida_Tensor* tensor);
 struct lida_Tensor* lida_tensor_deep_copy(struct lida_Tensor* tensor);
 /* does a deep copy if tensor is not packed in memory */
 struct lida_Tensor* lida_tensor_reshape(struct lida_Tensor* tensor, const uint32_t dims[], int rank);
+struct lida_Tensor* lida_tensor_stack(const struct lida_Tensor** tensors, int count);
 
 struct lida_Tensor* lida_tensor_flip(struct lida_Tensor* tensor, const uint32_t axes[], int num_axes);
 /* counter-clockwise rotation for n*90 degrees */
@@ -128,9 +129,16 @@ void lida_compute_graph_backward(struct lida_Compute_Graph* cg, struct lida_Loss
 const struct lida_Tensor* lida_compute_graph_get_output(struct lida_Compute_Graph* cg, size_t index);
 void lida_compute_graph_optimizer_step(struct lida_Compute_Graph* cg, struct lida_Optimizer* opt);
 
+void lida_rand_seed(uint64_t seed);
 /* generate a uniformly distributed 32-bit number */
 uint32_t lida_rand();
-void lida_rand_seed(uint64_t seed);
+/* generate a uniformly distributed float number in range [0..1] */
+float lida_rand_uniform();
+/* generate a normally distributed float number with mean=0 and standard deviation=1 */
+float lida_rand_normal();
+/* fill tensor with uniformly distributed values */
+void lida_tensor_fill_uniform(struct lida_Tensor* tensor, float left, float right);
+void lida_tensor_fill_normal(struct lida_Tensor* tensor, float mu, float sigma);
 
 #ifdef __cplusplus
 }

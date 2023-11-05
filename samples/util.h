@@ -21,10 +21,13 @@ log_func(int sev, const char* fmt, ...)
 
 void print_tensor_(const lida::Tensor& tensor, const char* str)
 {
-  printf("====== %s\n", str);
+  printf("====== %s (", str);
   int rank = tensor.rank();
   std::vector<uint32_t> dims(rank);
   tensor.dims(dims);
+  for (int i = 0; i < rank; i++) {
+    printf("%u%s", dims[i], (i == rank-1) ? ")\n" : ", ");
+  }
 
   std::vector<uint32_t> indices(rank, 0u);
   while (indices.back() != dims.back()) {

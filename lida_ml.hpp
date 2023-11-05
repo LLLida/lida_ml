@@ -156,6 +156,14 @@ namespace lida {
       lida_tensor_fill(raw, &value);
     }
 
+    void fill_uniform(float left = 0.0, float right = 1.0) LIDA_ML_NOEXCEPT {
+      lida_tensor_fill_uniform(raw, left, right);
+    }
+
+    void fill_normal(float mu = 0.0, float sigma = 1.0) LIDA_ML_NOEXCEPT {
+      lida_tensor_fill_normal(raw, mu, sigma);
+    }
+
     [[nodiscard]]
     Tensor transpose(std::span<const uint32_t> dims) LIDA_ML_NOEXCEPT {
       return lida_tensor_transpose(raw, dims.data(), dims.size());
@@ -195,7 +203,14 @@ namespace lida {
       }
     }
 
+    [[nodiscard]]
+    static Tensor stack(std::span<const Tensor> tensors) LIDA_ML_NOEXCEPT {
+      return lida_tensor_stack((const lida_Tensor**)tensors.data(), tensors.size());
+    }
+
   };
+
+  static_assert(sizeof(Tensor) == sizeof(lida_Tensor*));
 
   class Loss {
 
@@ -380,6 +395,10 @@ namespace lida {
     return lida_gate_mul();
   }
 
+  inline auto mm() LIDA_ML_NOEXCEPT {
+    return lida_gate_mm();
+  }
+
   inline auto relu() LIDA_ML_NOEXCEPT {
     return lida_gate_relu();
   }
@@ -392,12 +411,20 @@ namespace lida {
     return lida_gate_tanh();
   }
 
+  inline void rand_seed(uint64_t seed) LIDA_ML_NOEXCEPT {
+    lida_rand_seed(seed);
+  }
+
   inline auto rand() LIDA_ML_NOEXCEPT {
     return lida_rand();
   }
 
-  inline void rand_seed(uint64_t seed) LIDA_ML_NOEXCEPT {
-    lida_rand_seed(seed);
+  inline auto rand_uniform() LIDA_ML_NOEXCEPT {
+    return lida_rand_uniform();
+  }
+
+  inline auto rand_normal() LIDA_ML_NOEXCEPT {
+    return lida_rand_normal();
   }
 
 }

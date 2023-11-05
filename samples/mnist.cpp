@@ -72,11 +72,11 @@ auto load_dataset(const char* imagepath, const char* labelpath)
     auto ptr = dataset.data.data() + i * sizeof(buff);
     std::span<float> span(ptr, ptr + sizeof(buff));
     for (int j = 0; j < sizeof(buff); j++) {
-      span[j] = (float)buff[j];
+      span[j] = (float)buff[j] / 255.0;
     }
 
-    uint32_t dims[1] = {sizeof(buff)};
     dataset.labels.push_back(label);
+    uint32_t dims[1] = {sizeof(buff)};
     dataset.images.push_back(lida::Tensor(span, dims));
   }
   printf("loaded %d images\n", int(dataset.images.size()));
@@ -97,22 +97,95 @@ int main(int argc, char** argv)
       .alloc   = malloc,
       .dealloc = free,
       .log     = log_func
-  });
+    });
 
-  // lida::rand_seed(time(NULL));
+  lida::rand_seed(time(NULL));
 
   printf("Loading dataset... ");
   auto dataset = load_dataset(argv[1], argv[2]);
   shuffle(dataset.images, dataset.labels);
 
-  auto& digit = dataset.images.at(9);
-  for (uint32_t i = 0; i < 28; i++)
-    for (uint32_t j = 0; j < 28; j++) {
-      uint32_t indices[] = {j + i * 28};
-      auto v = (float*)digit.get(indices);
-      printf("%+003.1f%c", *v, " \n"[j==27]);
-    }
-  printf("(Label: %d)\n", int(dataset.labels.at(9)));
+  const size_t batch_size = 96;
+
+  auto batch_inputs = lida::Tensor::stack({dataset.images.data(), batch_size});
+
+  uint32_t batch_target_shape[] = {10, batch_size};
+  auto batch_target = lida::Tensor(batch_target_shape, LIDA_FORMAT_F32);
+  batch_target.fill_zeros();
+  for (uint32_t i = 0; i < batch_size; i++) {
+    // one-hot encoding
+    uint32_t indices[] = { uint32_t(dataset.labels[i]), i };
+    auto v = (float*)batch_target.get(indices);
+    *v = 1.0;
+  }
+
+  uint32_t w1_shape[] = {784, 16};
+  lida::Tensor w1(w1_shape, LIDA_FORMAT_F32);
+  w1.fill_normal();
+
+  uint32_t w2_shape[] = {16, 16};
+  lida::Tensor w2(w2_shape, LIDA_FORMAT_F32);
+  w2.fill_normal();
+
+  uint32_t w3_shape[] = {16, 10};
+  lida::Tensor w3(w3_shape, LIDA_FORMAT_F32);
+  w3.fill_normal();
+
+#define USE_BIASES 0
+
+#if USE_BIASES
+  uint32_t b1_shape[] = {784};
+  lida::Tensor b1(b1_shape, LIDA_FORMAT_F32);
+  b1.fill_uniform(-1.0, 1.0);
+
+  uint32_t b2_shape[] = {16};
+  lida::Tensor b2(b2_shape, LIDA_FORMAT_F32);
+  b2.fill_uniform(-1.0, 1.0);
+#endif
+
+  lida::Compute_Graph cg{};
+  uint32_t batch_shape[] = {784, batch_size};
+  cg.add_input("digit", batch_shape)
+    // first layer
+    .add_parameter(w1)
+    .add_gate(lida::mm())
+#if USE_BIASES
+    .add_parameter(b1)
+    .add_gate(lida::plus())
+#endif
+    .add_gate(lida::relu())
+    // second layer
+    .add_parameter(w2)
+    .add_gate(lida::mm())
+#if USE_BIASES
+    .add_parameter(b2)
+    .add_gate(lida::plus())
+#endif
+    .add_gate(lida::relu())
+    // third layer
+    .add_parameter(w3)
+    .add_gate(lida::mm())
+    .add_gate(lida::sigmoid());
+
+  lida::SGD_Optimizer optim(0.01);
+
+  for (int i = 0; i < 5; i++) {
+    cg.set_input("digit", batch_inputs);
+    cg.forward();
+    auto output = cg.get_output(0);
+
+    auto loss = lida::Loss::MSE(output, batch_target);
+    printf("MSE loss is %.3f\n", loss.value());
+
+    cg.zero_grad()
+      .backward(loss)
+      .optimizer_step(optim);
+  }
+
+  cg.forward();
+  auto output = cg.get_output(0);
+  auto loss = lida::Loss::MSE(output, batch_target);
+  printf("MSE loss is %.3f\n", loss.value());
 
   return 0;
 }

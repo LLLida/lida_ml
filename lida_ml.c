@@ -3,6 +3,7 @@
  */
 #include "lida_ml.h"
 
+#include "math.h"
 #include "string.h"
 
 #define ARR_SIZE(arr) (sizeof(arr) / sizeof(arr[0]))
@@ -652,7 +653,7 @@ lida_tensor_get(struct lida_Tensor* tensor, const uint32_t indices[], int num_in
   }
   for (int i = 0; i < num_indices; i++) {
     if (indices[i] >= tdim(tensor, i).num) {
-      LOG_ERROR("index out of bounds: indices[%u] > %u", indices[i], tensor->dims[i].num);
+      LOG_ERROR("index out of bounds: indices[%u] > %u", i, tensor->dims[i].num);
       return NULL;
     }
   }
@@ -897,6 +898,43 @@ lida_tensor_reshape(struct lida_Tensor* tensor, const uint32_t dims[], int rank)
       .pitch = dims[i],
       .index = i
     };
+  }
+  return ret;
+}
+
+struct lida_Tensor*
+lida_tensor_stack(const struct lida_Tensor** tensors, int count)
+{
+  if (count < 1) {
+    LOG_ERROR("tensor stack: at least one tensor should be passed");
+    return NULL;
+  }
+  int rank;
+  uint32_t dims[LIDA_MAX_DIMENSIONALITY];
+  lida_tensor_get_dims(tensors[0], dims, &rank);
+
+  for (int i = 1; i < count; i++) {
+    int other_rank;
+    uint32_t other_dims[LIDA_MAX_DIMENSIONALITY];
+    lida_tensor_get_dims(tensors[i], other_dims, &other_rank);
+    if (rank != other_rank || memcmp(dims, other_dims, rank*sizeof(uint32_t)) != 0) {
+      LOG_ERROR("tensor stack: tensors must have the same shape");
+      return NULL;
+    }
+    if (tensors[i]->format != tensors[0]->format) {
+      LOG_ERROR("tensor stack: tensors must have the same format");
+      return NULL;
+    }
+  }
+
+  uint32_t bytes_per_elem = format_num_bytes(tensors[0]->format);
+  dims[rank] = count;
+  struct lida_Tensor* ret = lida_tensor_create(dims, rank+1, tensors[0]->format);
+  LIDA_TENSOR_ITER_LOOP(ret, indices) {
+    void* dst = lida_tensor_get_unchecked(ret, indices);
+    const void* src = lida_tensor_get_unchecked(tensors[indices[rank]], indices);
+    memcpy(dst, src, bytes_per_elem);
+    LIDA_TENSOR_ITER_STEP(ret, indices);
   }
   return ret;
 }
@@ -1264,6 +1302,17 @@ lida_compute_graph_optimizer_step(struct lida_Compute_Graph* cg, struct lida_Opt
   }
 }
 
+void
+lida_rand_seed(uint64_t seed)
+{
+  uint64_t initseq = seed * 17 / 7;
+  g_ml.rnd_state = 0U;
+  g_ml.rnd_inc = (initseq << 1u) | 1u;
+  lida_rand();
+  g_ml.rnd_state += seed;
+  lida_rand();
+}
+
 uint32_t
 lida_rand()
 {
@@ -1275,13 +1324,58 @@ lida_rand()
   return (xorshifted >> rot) | (xorshifted << ((-rot) & 31));
 }
 
-void
-lida_rand_seed(uint64_t seed)
+float
+lida_rand_uniform()
 {
-  uint64_t initseq = seed * 17 / 7;
-  g_ml.rnd_state = 0U;
-  g_ml.rnd_inc = (initseq << 1u) | 1u;
-  lida_rand();
-  g_ml.rnd_state += seed;
-  lida_rand();
+  const int MAX_VALUE = 2<<18;
+  uint32_t value = lida_rand() % MAX_VALUE;
+  return (float)value / MAX_VALUE;
+}
+
+float
+lida_rand_normal()
+{
+  // we use Box-Muler transform
+  const float epsilon = 0.0000001;
+  const float two_pi = 2.0 * 3.14159265358979;
+
+  float u1, u2;
+  do {
+    u1 = lida_rand_uniform();
+  } while (u1 <= epsilon);
+  u2 = lida_rand_uniform();
+
+  float z1 = sqrtf(-2.0  * logf(u1)) * cosf(two_pi * u2);
+  // float z2 = sqrtf(-2.0  * logf(u1)) * sinf(two_pi * u2);
+  return z1;
+}
+
+void
+lida_tensor_fill_uniform(struct lida_Tensor* tensor, float left, float right)
+{
+  if (tensor->format != LIDA_FORMAT_F32) {
+    LOG_ERROR("fill uniform: tensor must have the float format");
+    return;
+  }
+
+  LIDA_TENSOR_ITER_LOOP(tensor, indices) {
+    float* v = lida_tensor_get_unchecked(tensor, indices);
+    *v = lida_rand_uniform() * (right - left) + left;
+    LIDA_TENSOR_ITER_STEP(tensor, indices);
+  }
+}
+
+void
+lida_tensor_fill_normal(struct lida_Tensor* tensor, float mu, float sigma)
+{
+  if (tensor->format != LIDA_FORMAT_F32) {
+    LOG_ERROR("fill normal: tensor must have the float format");
+    return;
+  }
+
+  LIDA_TENSOR_ITER_LOOP(tensor, indices) {
+    float* v = lida_tensor_get_unchecked(tensor, indices);
+    *v = lida_rand_normal() * sigma + mu;
+    LIDA_TENSOR_ITER_STEP(tensor, indices);
+  }
 }
