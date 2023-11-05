@@ -9,7 +9,10 @@ extern "C" {
 #endif
 
 const struct lida_Gate* lida_gate_plus();
+/* element-wise multiplication */
 const struct lida_Gate* lida_gate_mul();
+/* multiplies vector by matrix */
+const struct lida_Gate* lida_gate_mm();
 
 const struct lida_Gate* lida_gate_relu();
 const struct lida_Gate* lida_gate_sigmoid();

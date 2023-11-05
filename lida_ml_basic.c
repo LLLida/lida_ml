@@ -102,6 +102,129 @@ plus_gate_backward(void* udata, const struct lida_Tensor* output, const struct l
       }
     }
 }
+
+static struct lida_Tensor*
+mul_gate_forward(void* udata, const struct lida_Tensor** args)
+{
+  (void)udata;
+
+  const struct lida_Tensor* a = args[0];
+  const struct lida_Tensor* b = args[1];
+  if (compare_tensor_shapes(a, b) != 0) {
+    // LOG_ERROR("+: tensors must be the same shape");
+    return NULL;
+  }
+  lida_Format format = lida_tensor_get_format(a);
+  if (format != lida_tensor_get_format(b)) {
+    // LOG_ERROR("+: tensors must have the same format");
+    return NULL;
+  }
+
+  int rank;
+  uint32_t dims[LIDA_MAX_DIMENSIONALITY];
+  lida_tensor_get_dims(a, dims, &rank);
+
+  struct lida_Tensor* c = lida_tensor_create(dims, rank, format);
+  switch (format)
+    {
+    case LIDA_FORMAT_I32:
+      PERFORM_ELEMENTWISE_OP2(a, b, c, int32_t, *);
+      break;
+    case LIDA_FORMAT_U32:
+      PERFORM_ELEMENTWISE_OP2(a, b, c, uint32_t, *);
+      break;
+    case LIDA_FORMAT_F32:
+      PERFORM_ELEMENTWISE_OP2(a, b, c, float, *);
+      break;
+    default:
+      // LOG_ERROR("+ on this format is not supported");
+      lida_tensor_destroy(c);
+      return NULL;
+    }
+  return c;
+}
+
+static void
+mul_gate_backward(void* udata, const struct lida_Tensor* output, const struct lida_Tensor* args[], struct lida_Tensor* grads[])
+{
+  (void)udata;
+  (void)args;
+
+  // f(x, y) = x * y
+  // df/dx = y
+  // df/dy = x
+  for (int i = 0; i < 2; i++)
+    if (grads[i]) {
+      LIDA_TENSOR_ITER_LOOP(grads[i], indices) {
+	float* y = lida_tensor_get_unchecked(output, indices);
+	float* other = lida_tensor_get_unchecked(args[1-i], indices);
+	float* g = lida_tensor_get_unchecked(grads[i], indices);
+	*g += *y * *other;
+	LIDA_TENSOR_ITER_STEP(grads[i], indices);
+      }
+    }
+}
+
+static struct lida_Tensor*
+mm_gate_forward(void* udata, const struct lida_Tensor** args)
+{
+  (void)udata;
+
+  const struct lida_Tensor* x = args[0];
+  const struct lida_Tensor* W = args[1];
+
+  lida_Format format = lida_tensor_get_format(W);
+  if (format != LIDA_FORMAT_F32 && format != lida_tensor_get_format(x)) {
+    // LOG_ERROR("mm: tensors must have the float format");
+    return NULL;
+  }
+
+  int rank;
+  uint32_t dims[LIDA_MAX_DIMENSIONALITY];
+  lida_tensor_get_dims(W, dims, &rank);
+  if (rank != 2) {
+    // LOG_ERROR("mm: second argument must be a matrix");
+    return NULL;
+  }
+  uint32_t width = dims[0];
+  uint32_t height = dims[1];
+  lida_tensor_get_dims(x, dims, &rank);
+  if (rank != 2) {
+    // LOG_ERROR("mm: first argument must be a batch of vectors");
+    return NULL;
+  }
+  if (width != dims[0]) {
+    // LOG_ERROR("mm: matrix width must be equal to height of vector");
+    return NULL;
+  }
+
+  dims[0] = height;
+  struct lida_Tensor* c = lida_tensor_create(dims, 2, LIDA_FORMAT_F32);
+  lida_tensor_fill_zeros(c);
+  for (uint32_t b = 0; b < dims[1]; b++)
+    for (uint32_t j = 0; j < height; j++)
+      // NOTE: we could easily vectorize this loop
+      for (uint32_t i = 0; i < width; i++) {
+	uint32_t indices[2] = { i, j };
+	float* w = lida_tensor_get_unchecked(W, indices);
+	indices[1] = b;
+	float* x_ = lida_tensor_get_unchecked(x, indices);
+	indices[0] = j;
+	float* y = lida_tensor_get_unchecked(c, indices);
+	*y += *w * *x_;
+      }
+  return c;
+}
+
+static void
+mm_gate_backward(void* udata, const struct lida_Tensor* output, const struct lida_Tensor* args[], struct lida_Tensor* grads[])
+{
+  (void)udata;
+  (void)args;
+
+
+}
+
 static struct lida_Tensor*
 relu_gate_forward(void* udata, const struct lida_Tensor** args)
 {
@@ -136,6 +259,40 @@ relu_gate_backward(void* udata, const struct lida_Tensor* output, const struct l
 	float* y = lida_tensor_get_unchecked(output, indices);
 	*g += *y;
       }
+      LIDA_TENSOR_ITER_STEP(grads[0], indices);
+    }
+  }
+}
+
+static struct lida_Tensor*
+sigmoid_gate_forward(void* udata, const struct lida_Tensor** args)
+{
+  (void)udata;
+
+  const struct lida_Tensor* x = args[0];
+  struct lida_Tensor* y = lida_tensor_alike(x);
+  LIDA_TENSOR_ITER_LOOP(y, indices) {
+    float* xi = lida_tensor_get_unchecked(x, indices);
+    float* yi = lida_tensor_get_unchecked(y, indices);
+    *yi = 1.0 / (1.0 + expf(-*xi));
+    LIDA_TENSOR_ITER_STEP(y, indices);
+  }
+  return y;
+}
+
+static void
+sigmoid_gate_backward(void* udata, const struct lida_Tensor* output, const struct lida_Tensor* args[], struct lida_Tensor* grads[])
+{
+  (void)udata;
+  (void)output;
+
+  if (grads[0]) {
+    LIDA_TENSOR_ITER_LOOP(grads[0], indices) {
+      float* x = lida_tensor_get_unchecked(args[0], indices);
+      float* y = lida_tensor_get_unchecked(output, indices);
+      float* g = lida_tensor_get_unchecked(grads[0], indices);
+      float s = 1.0 / (1.0 + expf(-*x));
+      *g += s * (1.0 - s) * *y;
       LIDA_TENSOR_ITER_STEP(grads[0], indices);
     }
   }
@@ -190,6 +347,7 @@ MSE_Loss_backward(struct lida_Loss* self)
 
 static struct lida_Gate g_plus_gate;
 static struct lida_Gate g_mul_gate;
+static struct lida_Gate g_mm_gate;
 
 static struct lida_Gate g_relu_gate;
 static struct lida_Gate g_sigmoid_gate;
@@ -212,7 +370,29 @@ lida_gate_plus()
 const struct lida_Gate*
 lida_gate_mul()
 {
+  if (g_mul_gate.name == NULL) {
+    g_mul_gate = (struct lida_Gate) {
+      .name = "*",
+      .forward = &mul_gate_forward,
+      .backward = &mul_gate_backward,
+      .num_args = 2
+    };
+  }
   return &g_mul_gate;
+}
+
+const struct lida_Gate*
+lida_gate_mm()
+{
+  if (g_mm_gate.name == NULL) {
+    g_mm_gate = (struct lida_Gate) {
+      .name = "mm",
+      .forward = &mm_gate_forward,
+      .backward = &mm_gate_backward,
+      .num_args = 2
+    };
+  }
+  return &g_mm_gate;
 }
 
 const struct lida_Gate*
@@ -232,6 +412,14 @@ lida_gate_relu()
 const struct lida_Gate*
 lida_gate_sigmoid()
 {
+  if (g_sigmoid_gate.name == NULL) {
+    g_sigmoid_gate = (struct lida_Gate) {
+      .name = "sigmoid",
+      .forward = &sigmoid_gate_forward,
+      .backward = &sigmoid_gate_backward,
+      .num_args = 1
+    };
+  }
   return &g_sigmoid_gate;
 }
 

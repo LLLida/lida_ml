@@ -12,3 +12,4 @@ endfunction(add_sample)
 
 add_sample(tensors)
 add_sample(grad)
+add_sample(mnist)

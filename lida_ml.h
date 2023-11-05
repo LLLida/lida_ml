@@ -128,6 +128,10 @@ void lida_compute_graph_backward(struct lida_Compute_Graph* cg, struct lida_Loss
 const struct lida_Tensor* lida_compute_graph_get_output(struct lida_Compute_Graph* cg, size_t index);
 void lida_compute_graph_optimizer_step(struct lida_Compute_Graph* cg, struct lida_Optimizer* opt);
 
+/* generate a uniformly distributed 32-bit number */
+uint32_t lida_rand();
+void lida_rand_seed(uint64_t seed);
+
 #ifdef __cplusplus
 }
 #endif

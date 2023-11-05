@@ -142,7 +142,13 @@ struct lida_Compute_Graph {
 POOL_DEF(Allocation, 512);
 POOL_DEF(lida_Tensor, 1024);
 
-static struct lida_ML g_ml;
+static struct {
+  void* (*alloc)(size_t bytes);
+  void (*dealloc)(void* mem);
+  void (*log)(int severity, const char* fmt, ...);
+  uint64_t rnd_state;
+  uint64_t rnd_inc;
+} g_ml;
 POOL_DECL(Allocation);
 POOL_DECL(lida_Tensor);
 
@@ -522,7 +528,11 @@ destroy_compute_node(struct Compute_Node* node)
 void
 lida_ml_init(const struct lida_ML* ml)
 {
-  memcpy(&g_ml, ml, sizeof(struct lida_ML));
+  g_ml.alloc = ml->alloc;
+  g_ml.dealloc = ml->dealloc;
+  g_ml.log = ml->log;
+  g_ml.rnd_state = 0x853c49e6748fea9bULL;
+  g_ml.rnd_inc = 0xda3e39cb94b95bdbULL;
 }
 
 void
@@ -1255,4 +1265,26 @@ lida_compute_graph_optimizer_step(struct lida_Compute_Graph* cg, struct lida_Opt
       opt->step(opt, node->u.param.value, node->u.param.grad);
     }
   }
+}
+
+uint32_t
+lida_rand()
+{
+  // PCG: https://www.pcg-random.org/download.html
+  uint64_t oldstate = g_ml.rnd_state;
+  g_ml.rnd_state = oldstate * 6364136223846793005ULL + g_ml.rnd_inc;
+  uint32_t xorshifted = ((oldstate >> 18u) ^ oldstate) >> 27u;
+  uint32_t rot = oldstate >> 59u;
+  return (xorshifted >> rot) | (xorshifted << ((-rot) & 31));
+}
+
+void
+lida_rand_seed(uint64_t seed)
+{
+  uint64_t initseq = seed * 17 / 7;
+  g_ml.rnd_state = 0U;
+  g_ml.rnd_inc = (initseq << 1u) | 1u;
+  lida_rand();
+  g_ml.rnd_state += seed;
+  lida_rand();
 }
