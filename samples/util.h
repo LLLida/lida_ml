@@ -5,6 +5,7 @@
 #include "stdio.h"
 #include "time.h"
 
+#include <utility>
 #include <vector>
 
 static void
@@ -74,5 +75,25 @@ void print_tensor_dim(const lida::Tensor& tensor)
   };
   for (int i = 0; i < rank; i++) {
     printf("%u%s", dims[i], m[i==rank-1]);
+  }
+}
+
+template<typename T>
+void shuffle(std::vector<T>& v)
+{
+  for (int i = v.size()-1; i > 0; i++) {
+    int index = lida::rand() % i;
+    std::swap(v[i], v[index]);
+  }
+}
+
+template<typename T, typename U>
+void shuffle(std::vector<T>& v, std::vector<U>& l)
+{
+  for (int i = v.size()-1; i > 0; i--) {
+    int index = lida::rand() % i;
+    fflush(stdout);
+    std::swap(v[i], v[index]);
+    std::swap(l[i], l[index]);
   }
 }

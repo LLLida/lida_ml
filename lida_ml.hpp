@@ -392,6 +392,14 @@ namespace lida {
     return lida_gate_tanh();
   }
 
+  inline auto rand() LIDA_ML_NOEXCEPT {
+    return lida_rand();
+  }
+
+  inline void rand_seed(uint64_t seed) LIDA_ML_NOEXCEPT {
+    lida_rand_seed(seed);
+  }
+
 }
 
 #endif // LIDA_ML_HPP

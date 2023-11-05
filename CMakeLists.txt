@@ -22,7 +22,7 @@ target_compile_options(lida_ml PRIVATE
   $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall -Wextra -Wpedantic -Wno-unused-function> # g++ or clang
 )
 
-set(ENABLE_ASAN 1)
+set(ENABLE_ASAN 0)
 
 if (ENABLE_ASAN)
   target_compile_options(lida_ml PUBLIC

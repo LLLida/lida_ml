@@ -116,9 +116,6 @@ struct lida_Compute_Graph {
   allocate_##type ()						\
   {								\
     struct type##_Pool* pool = POOL_NAME(type);		\
-    while (pool != NULL && pool->num_free > 0) {	\
-      pool = pool->next;				\
-    }								\
     if (pool == NULL || pool->num_free == 0) {	\
       ADD_POOL_NAME(type)();					\
       pool = POOL_NAME(type);				\
