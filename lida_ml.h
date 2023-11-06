@@ -12,10 +12,14 @@ extern "C" {
 #define LIDA_MAX_DIMENSIONALITY 8
 #endif
 
+typedef void*(*lida_ml_alloc_func_t)(size_t bytes);
+typedef void (*lida_ml_dealloc_func_t)(void* mem);
+typedef void (*lida_ml_log_func_t)(int severity, const char* fmt, ...);
+
 struct lida_ML {
-  void* (*alloc)(size_t bytes);
-  void (*dealloc)(void* mem);
-  void (*log)(int severity, const char* fmt, ...);
+  lida_ml_alloc_func_t alloc;
+  lida_ml_dealloc_func_t dealloc;
+  lida_ml_log_func_t log;
 };
 
 typedef enum {
@@ -59,6 +63,8 @@ struct lida_Optimizer {
 
 void lida_ml_init(const struct lida_ML* ml);
 void lida_ml_done();
+lida_ml_log_func_t lida_ml_get_log();
+
 struct lida_Tensor* lida_tensor_create(const uint32_t dims[], int rank, lida_Format format);
 void lida_tensor_destroy(struct lida_Tensor* tensor);
 struct lida_Tensor* lida_tensor_create_from_memory(void* memory, uint32_t bytes, const uint32_t dims[], int rank, lida_Format format);

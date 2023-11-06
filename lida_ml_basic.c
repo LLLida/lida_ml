@@ -2,6 +2,11 @@
 
 #include "math.h"
 
+#define LOG_DEBUG(...) lida_ml_get_log()(0, __VA_ARGS__)
+#define LOG_INFO(...)  lida_ml_get_log()(1, __VA_ARGS__)
+#define LOG_WARN(...)  lida_ml_get_log()(2, __VA_ARGS__)
+#define LOG_ERROR(...) lida_ml_get_log()(3, __VA_ARGS__)
+
 
 /// static functions
 
@@ -52,37 +57,48 @@ plus_gate_forward(void* udata, const struct lida_Tensor** args)
 
   const struct lida_Tensor* a = args[0];
   const struct lida_Tensor* b = args[1];
-  if (compare_tensor_shapes(a, b) != 0) {
-    // LOG_ERROR("+: tensors must be the same shape");
+
+  int arank;
+  uint32_t adims[LIDA_MAX_DIMENSIONALITY];
+  lida_tensor_get_dims(a, adims, &arank);
+  int brank;
+  uint32_t bdims[LIDA_MAX_DIMENSIONALITY];
+  lida_tensor_get_dims(b, bdims, &brank);
+
+  if (arank != brank && arank - brank != 1) {
+    LOG_ERROR("+: tensor shapes don't match");
     return NULL;
   }
+
   lida_Format format = lida_tensor_get_format(a);
   if (format != lida_tensor_get_format(b)) {
-    // LOG_ERROR("+: tensors must have the same format");
+    LOG_ERROR("+: tensors must have the same format");
     return NULL;
   }
 
-  int rank;
-  uint32_t dims[LIDA_MAX_DIMENSIONALITY];
-  lida_tensor_get_dims(a, dims, &rank);
-
-  struct lida_Tensor* c = lida_tensor_create(dims, rank, format);
-  switch (format)
-    {
-    case LIDA_FORMAT_I32:
-      PERFORM_ELEMENTWISE_OP2(a, b, c, int32_t, +);
-      break;
-    case LIDA_FORMAT_U32:
-      PERFORM_ELEMENTWISE_OP2(a, b, c, uint32_t, +);
-      break;
-    case LIDA_FORMAT_F32:
-      PERFORM_ELEMENTWISE_OP2(a, b, c, float, +);
-      break;
-    default:
-      // LOG_ERROR("+ on this format is not supported");
-      lida_tensor_destroy(c);
-      return NULL;
-    }
+  struct lida_Tensor* c = lida_tensor_create(adims, arank, format);
+  LIDA_TENSOR_ITER_LOOP(c, indices) {
+    void* ai = lida_tensor_get_unchecked(a, indices);
+    void* bi = lida_tensor_get_unchecked(b, indices);
+    void* ci = lida_tensor_get_unchecked(c, indices);
+    switch (format)
+      {
+      case LIDA_FORMAT_I32:
+	*(int32_t*)ci = *(int32_t*)ai + *(int32_t*)bi;
+	break;
+      case LIDA_FORMAT_U32:
+	*(uint32_t*)ci = *(uint32_t*)ai + *(uint32_t*)bi;
+	break;
+      case LIDA_FORMAT_F32:
+	*(float*)ci = *(float*)ai + *(float*)bi;
+	break;
+      default:
+	LOG_ERROR("+ on this format is not supported");
+	lida_tensor_destroy(c);
+	return NULL;
+      }
+    LIDA_TENSOR_ITER_STEP(c, indices);
+  }
   return c;
 }
 
@@ -111,12 +127,12 @@ mul_gate_forward(void* udata, const struct lida_Tensor** args)
   const struct lida_Tensor* a = args[0];
   const struct lida_Tensor* b = args[1];
   if (compare_tensor_shapes(a, b) != 0) {
-    // LOG_ERROR("+: tensors must be the same shape");
+    LOG_ERROR("*: tensors must be the same shape");
     return NULL;
   }
   lida_Format format = lida_tensor_get_format(a);
   if (format != lida_tensor_get_format(b)) {
-    // LOG_ERROR("+: tensors must have the same format");
+    LOG_ERROR("*: tensors must have the same format");
     return NULL;
   }
 
@@ -137,7 +153,7 @@ mul_gate_forward(void* udata, const struct lida_Tensor** args)
       PERFORM_ELEMENTWISE_OP2(a, b, c, float, *);
       break;
     default:
-      // LOG_ERROR("+ on this format is not supported");
+      LOG_ERROR("+ on this format is not supported");
       lida_tensor_destroy(c);
       return NULL;
     }
@@ -175,7 +191,7 @@ mm_gate_forward(void* udata, const struct lida_Tensor** args)
 
   lida_Format format = lida_tensor_get_format(W);
   if (format != LIDA_FORMAT_F32 && format != lida_tensor_get_format(x)) {
-    // LOG_ERROR("mm: tensors must have the float format");
+    LOG_ERROR("mm: tensors must have the float format");
     return NULL;
   }
 
@@ -183,18 +199,18 @@ mm_gate_forward(void* udata, const struct lida_Tensor** args)
   uint32_t dims[LIDA_MAX_DIMENSIONALITY];
   lida_tensor_get_dims(W, dims, &rank);
   if (rank != 2) {
-    // LOG_ERROR("mm: second argument must be a matrix");
+    LOG_ERROR("mm: second argument must be a matrix");
     return NULL;
   }
   uint32_t width = dims[0];
   uint32_t height = dims[1];
   lida_tensor_get_dims(x, dims, &rank);
   if (rank != 2) {
-    // LOG_ERROR("mm: first argument must be a batch of vectors");
+    LOG_ERROR("mm: first argument must be a batch of vectors");
     return NULL;
   }
   if (width != dims[0]) {
-    // LOG_ERROR("mm: matrix width must be equal to height of vector");
+    LOG_ERROR("mm: matrix width must be equal to height of vector");
     return NULL;
   }
 
@@ -341,7 +357,7 @@ static void
 MSE_Loss_forward(struct lida_Loss* self, const struct lida_Tensor* pred, const struct lida_Tensor* target)
 {
   if (compare_tensor_shapes(pred, target) != 0) {
-    // LOG_ERROR("MSE loss: tensors must be the same shape");
+    LOG_ERROR("MSE loss: tensors must be the same shape");
     return;
   }
 

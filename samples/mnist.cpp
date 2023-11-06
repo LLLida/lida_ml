@@ -61,7 +61,7 @@ auto load_dataset(const char* imagepath, const char* labelpath)
   dataset.images.reserve(t_header.count);
   dataset.labels.reserve(l_header.count);
 
-  char buff[28*28];
+  uint8_t buff[28*28];
   dataset.data.resize(t_header.count * sizeof(buff));
 
   for (int i = 0; i < t_header.count; i++) {
@@ -86,10 +86,46 @@ auto load_dataset(const char* imagepath, const char* labelpath)
   return dataset;
 }
 
+void print_digit(const lida::Tensor& tensor)
+{
+  for (uint32_t j = 0; j < 28; j++) {
+    for (uint32_t i = 0; i < 28; i++) {
+      uint32_t indices[] = {i + 28*j};
+      float* a = (float*)tensor.get(indices);
+      printf("%3d ", int(*a * 255));
+    }
+    printf("\n");
+  }
+}
+
+float accuracy(const Dataset& dataset, int count, size_t batch_size, lida::Compute_Graph& model)
+{
+  int correct = 0;
+  for (size_t i = 0; i < count; i++) {
+    auto input = lida::Tensor::stack({&dataset.images[i], batch_size});
+    model.set_input("digit", input).forward();
+    auto output = model.get_output(0);
+
+    for (uint32_t b = 0; b < batch_size; b++) {
+      int label = 0;
+      float max_val = 0.0;
+      for (uint32_t j = 0; j < 10; j++) {
+	uint32_t indices[] = {j, b};
+	float* c = (float*)output.get(indices);
+	if (*c > max_val) {
+	  label = j;
+	}
+      }
+      correct += (label == dataset.labels[b + i*batch_size]);
+    }
+  }
+  return (float)correct / count / batch_size;
+}
+
 int main(int argc, char** argv)
 {
-  if (argc != 3) {
-    printf("Usage: %s PATH-TO-DATASET\n", argv[0]);
+  if (argc != 5) {
+    printf("Usage: %s PATH-TO-TRAIN-IMAGES PATH-TO-TRAIN-LABELS PATH-TO-TEST-IMAGES PATH-TO-TEST-LABELS\n", argv[0]);
     return -1;
   }
 
@@ -105,20 +141,6 @@ int main(int argc, char** argv)
   auto dataset = load_dataset(argv[1], argv[2]);
   shuffle(dataset.images, dataset.labels);
 
-  const size_t batch_size = 96;
-
-  auto batch_inputs = lida::Tensor::stack({dataset.images.data(), batch_size});
-
-  uint32_t batch_target_shape[] = {10, batch_size};
-  auto batch_target = lida::Tensor(batch_target_shape, LIDA_FORMAT_F32);
-  batch_target.fill_zeros();
-  for (uint32_t i = 0; i < batch_size; i++) {
-    // one-hot encoding
-    uint32_t indices[] = { uint32_t(dataset.labels[i]), i };
-    auto v = (float*)batch_target.get(indices);
-    *v = 1.0;
-  }
-
   uint32_t w1_shape[] = {784, 16};
   lida::Tensor w1(w1_shape, LIDA_FORMAT_F32);
   w1.fill_normal();
@@ -131,17 +153,19 @@ int main(int argc, char** argv)
   lida::Tensor w3(w3_shape, LIDA_FORMAT_F32);
   w3.fill_normal();
 
-#define USE_BIASES 0
-
-#if USE_BIASES
-  uint32_t b1_shape[] = {784};
+  uint32_t b1_shape[] = {16};
   lida::Tensor b1(b1_shape, LIDA_FORMAT_F32);
   b1.fill_uniform(-1.0, 1.0);
 
   uint32_t b2_shape[] = {16};
   lida::Tensor b2(b2_shape, LIDA_FORMAT_F32);
   b2.fill_uniform(-1.0, 1.0);
-#endif
+
+  uint32_t b3_shape[] = {10};
+  lida::Tensor b3(b3_shape, LIDA_FORMAT_F32);
+  b3.fill_uniform(-1.0, 1.0);
+
+  const size_t batch_size = 100;
 
   lida::Compute_Graph cg{};
   uint32_t batch_shape[] = {784, batch_size};
@@ -149,43 +173,83 @@ int main(int argc, char** argv)
     // first layer
     .add_parameter(w1)
     .add_gate(lida::mm())
-#if USE_BIASES
     .add_parameter(b1)
     .add_gate(lida::plus())
-#endif
     .add_gate(lida::relu())
     // second layer
     .add_parameter(w2)
     .add_gate(lida::mm())
-#if USE_BIASES
     .add_parameter(b2)
     .add_gate(lida::plus())
-#endif
     .add_gate(lida::relu())
     // third layer
     .add_parameter(w3)
     .add_gate(lida::mm())
+    .add_parameter(b3)
+    .add_gate(lida::plus())
     .add_gate(lida::sigmoid());
 
-  lida::SGD_Optimizer optim(0.01);
+  lida::SGD_Optimizer optim(0.001);
 
-  for (int i = 0; i < 5; i++) {
-    cg.set_input("digit", batch_inputs);
-    cg.forward();
+  for (size_t i = 0; i < dataset.images.size()/batch_size; i++) {
+    // grab next batch of images
+    auto batch_inputs = lida::Tensor::stack({dataset.images.data() + i*batch_size, batch_size});
+    // grab next batch of labels
+    uint32_t batch_target_shape[] = {10, batch_size};
+    auto batch_target = lida::Tensor(batch_target_shape, LIDA_FORMAT_F32);
+    batch_target.fill_zeros();
+    // one-hot encoding
+    for (uint32_t j = 0; j < batch_size; j++) {
+      uint32_t indices[] = { uint32_t(dataset.labels[j + i*batch_size]), j };
+      auto v = (float*)batch_target.get(indices);
+      *v = 1.0;
+    }
+
+    cg.set_input("digit", batch_inputs).forward();
     auto output = cg.get_output(0);
 
     auto loss = lida::Loss::MSE(output, batch_target);
-    printf("MSE loss is %.3f\n", loss.value());
+    if (i % 10 == 0)
+      printf("MSE loss is %.3f\n", loss.value());
 
     cg.zero_grad()
       .backward(loss)
       .optimizer_step(optim);
   }
+  printf("Train accuracy: %f\n", accuracy(dataset, dataset.images.size()/batch_size, batch_size, cg));
 
-  cg.forward();
-  auto output = cg.get_output(0);
-  auto loss = lida::Loss::MSE(output, batch_target);
-  printf("MSE loss is %.3f\n", loss.value());
+  auto test_dataset = load_dataset(argv[3], argv[4]);
+  for (size_t i = 0; i < batch_size; i++) {
+    printf("%d%c", (int)test_dataset.labels[i], " \n"[i==batch_size-1]);
+  }
+  for (int k = 0; k < 3; k++)
+    print_digit(test_dataset.images[k]);
+
+  int count = 0;
+  for (size_t i = 0; i < 1; i++) {
+    auto input = lida::Tensor::stack({&test_dataset.images[i], batch_size});
+    cg.set_input("digit", input).forward();
+    auto output = cg.get_output(0);
+
+    for (uint32_t b = 0; b < batch_size; b++) {
+      printf("%d: ", (int)test_dataset.labels[b + i*batch_size]);
+      int label = 0;
+      float max_val = 0.0;
+      for (uint32_t j = 0; j < 10; j++) {
+	uint32_t indices[] = {j, b};
+	float* c = (float*)output.get(indices);
+	if (*c > max_val) {
+	  label = j;
+	}
+	printf("%f ", *c);
+      }
+      count += (label == test_dataset.labels[b + i*batch_size]);
+      if (label == test_dataset.labels[b + i*batch_size])
+	printf("OK");
+      printf("\n");
+    }
+  }
+  printf("Test accuracy: %f\n", (float)count / batch_size);
 
   return 0;
 }

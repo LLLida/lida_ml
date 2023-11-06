@@ -1,3 +1,4 @@
 build/
+build-release/
 datasets/MNIST/*
 .ccls-cache/

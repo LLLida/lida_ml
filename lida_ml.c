@@ -544,6 +544,12 @@ lida_ml_done()
   }
 }
 
+lida_ml_log_func_t
+lida_ml_get_log()
+{
+  return g_ml.log;
+}
+
 struct lida_Tensor*
 lida_tensor_create(const uint32_t dims[], int rank, lida_Format format)
 {
