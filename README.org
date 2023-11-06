@@ -1,0 +1,27 @@
+#+AUTHOR: Adil Mokhammad
+
+* The project
+
+API was meant to be similar to PyTorch except one big difference. The library isn't as dynamic as PyTorch. We use the term =Compute_Graph= to do operations on tensors.
+
+* Samples
+
+** tensors
+
+Shows basic usage of tensors.
+
+** grad
+
+Shows how to do automatic differentiation.
+
+** mnist
+
+Shows how to build real neural network. The network's architecture was taken from =3Blue1Brown='s video.
+
+* Roadmap
+
+ - more loss functions: cross entropy especially
+ - make C++ API more fancier
+ - more gates: convolution etc.
+ - fast tensor operations using AVX-512
+ - (probably won't happen) GPU implementation using API Vulkan
