@@ -95,7 +95,6 @@ void shuffle(std::vector<T>& v, std::vector<U>& l)
 {
   for (int i = v.size()-1; i > 0; i--) {
     int index = lida::rand() % i;
-    fflush(stdout);
     std::swap(v[i], v[index]);
     std::swap(l[i], l[index]);
   }
