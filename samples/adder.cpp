@@ -12,7 +12,7 @@ int main()
 
   // lida::rand_seed(time(NULL));
 
-  size_t count = 15;
+  size_t count = 100;
   uint32_t input_size = 2;
   uint32_t output_size = 2;
 
@@ -27,6 +27,10 @@ int main()
 
     targets[output_size*i]   = x + 0.45*y;
     targets[output_size*i+1] = x - y;
+
+    // add a bit of noise
+    // targets[output_size*i] += lida::rand_normal()*0.01;
+    // targets[output_size*i+1] += lida::rand_normal()*0.01;
   }
 
   uint32_t input_shape[] = {input_size, (uint32_t)count};
