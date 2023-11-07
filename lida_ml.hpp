@@ -1,6 +1,7 @@
 #ifndef LIDA_ML_HPP
 #define LIDA_ML_HPP
 
+#include <cmath>
 #include <stdexcept>
 #include <span>
 
@@ -328,6 +329,12 @@ namespace lida {
       return *this;
     }
 
+    template<typename T>
+    Compute_Graph& add_layer(T& layer) {
+      layer.bind(*this);
+      return *this;
+    }
+
     Compute_Graph& set_input(const char* name, const lida::Tensor& tensor) {
       if (lida_compute_graph_set_input(raw, name, tensor.handle()) != 0) {
 	throw std::runtime_error("TODO: failed");
@@ -426,6 +433,33 @@ namespace lida {
   inline auto rand_normal() LIDA_ML_NOEXCEPT {
     return lida_rand_normal();
   }
+
+  class Linear_Layer {
+  public:
+    // weight matrix
+    lida::Tensor w;
+    // bias vector
+    lida::Tensor b;
+
+    Linear_Layer(uint32_t num_inputs, uint32_t num_outputs)
+      // we have to use this ugly construct because std::span doesn't accept r-values
+      : w(std::span{std::array{num_inputs, num_outputs}.data(), 2}, LIDA_FORMAT_F32),
+	b(std::span{&num_outputs, 1}, LIDA_FORMAT_F32) {
+      // Xavier initialization
+      float var = sqrtf(2.0 / (num_inputs + num_outputs));
+      w.fill_normal(0.0, var);
+
+      b.fill_uniform(-1.0, 1.0);
+    }
+
+    void bind(Compute_Graph& cg) {
+      cg.add_parameter(w)
+	.add_gate(mm())
+	.add_parameter(b)
+	.add_gate(plus());
+    }
+
+  };
 
 }
 

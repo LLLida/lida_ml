@@ -117,29 +117,9 @@ int main(int argc, char** argv)
   auto dataset = load_dataset(argv[1], argv[2]);
   shuffle(dataset.images, dataset.labels);
 
-  uint32_t w1_shape[] = {784, 16};
-  lida::Tensor w1(w1_shape, LIDA_FORMAT_F32);
-  w1.fill_normal(0.0, 0.25);
-
-  uint32_t w2_shape[] = {16, 16};
-  lida::Tensor w2(w2_shape, LIDA_FORMAT_F32);
-  w2.fill_normal(0.0, 0.25);
-
-  uint32_t w3_shape[] = {16, 10};
-  lida::Tensor w3(w3_shape, LIDA_FORMAT_F32);
-  w3.fill_normal(0.0, 0.25);
-
-  uint32_t b1_shape[] = {16};
-  lida::Tensor b1(b1_shape, LIDA_FORMAT_F32);
-  b1.fill_uniform(-1.0, 1.0);
-
-  uint32_t b2_shape[] = {16};
-  lida::Tensor b2(b2_shape, LIDA_FORMAT_F32);
-  b2.fill_uniform(-1.0, 1.0);
-
-  uint32_t b3_shape[] = {10};
-  lida::Tensor b3(b3_shape, LIDA_FORMAT_F32);
-  b3.fill_uniform(-1.0, 1.0);
+  lida::Linear_Layer layer1(784, 16);
+  lida::Linear_Layer layer2(16, 16);
+  lida::Linear_Layer layer3(16, 10);
 
   // Hyper parameters
   const size_t batch_size = 50;
@@ -149,23 +129,15 @@ int main(int argc, char** argv)
   uint32_t batch_shape[] = {784, batch_size};
   cg.add_input("digit", batch_shape)
     // first layer
-    .add_parameter(w1)
-    .add_gate(lida::mm())
-    .add_parameter(b1)
-    .add_gate(lida::plus())
+    .add_layer(layer1)
     .add_gate(lida::relu())
     // second layer
-    .add_parameter(w2)
-    .add_gate(lida::mm())
-    .add_parameter(b2)
-    .add_gate(lida::plus())
+    .add_layer(layer2)
     .add_gate(lida::relu())
     // third layer
-    .add_parameter(w3)
-    .add_gate(lida::mm())
-    .add_parameter(b3)
-    .add_gate(lida::plus())
+    .add_layer(layer3)
     .add_gate(lida::sigmoid());
+
 
   lida::SGD_Optimizer optim(0.001);
 
