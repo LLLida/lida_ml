@@ -19,6 +19,7 @@ const struct lida_Gate* lida_gate_sigmoid();
 const struct lida_Gate* lida_gate_tanh();
 
 void lida_MSE_loss(struct lida_Loss* loss);
+void lida_Cross_Entropy_Loss(struct lida_Loss* loss);
 
 #ifdef __cplusplus
 }

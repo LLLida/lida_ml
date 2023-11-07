@@ -229,7 +229,14 @@ namespace lida {
       Loss loss;
       lida_MSE_loss(&loss.raw);
       loss.raw.forward(&loss.raw, pred.handle(), y.handle());
-      // printf("loss is %f\n", loss.raw.value);
+      return loss;
+    }
+
+    [[nodiscard]]
+    static auto cross_entropy(const Tensor& pred, const Tensor& y) LIDA_ML_NOEXCEPT {
+      Loss loss;
+      lida_Cross_Entropy_Loss(&loss.raw);
+      loss.raw.forward(&loss.raw, pred.handle(), y.handle());
       return loss;
     }
 

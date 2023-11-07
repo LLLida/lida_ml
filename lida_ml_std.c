@@ -397,6 +397,80 @@ MSE_Loss_backward(struct lida_Loss* self)
   return grad;
 }
 
+static void
+Cross_Entropy_Loss_forward(struct lida_Loss* self, const struct lida_Tensor* pred, const struct lida_Tensor* target)
+{
+  if (compare_tensor_shapes(pred, target) != 0) {
+    LOG_ERROR("Cross entropy loss: tensors must be the same shape");
+    return;
+  }
+  lida_Format format = lida_tensor_get_format(pred);
+  if (format != LIDA_FORMAT_F32 && format != lida_tensor_get_format(target)) {
+    LOG_ERROR("Cross entropy loss: both tensors must be the float format");
+    return;
+  }
+  int rank;
+  uint32_t dims[LIDA_MAX_DIMENSIONALITY];
+  lida_tensor_get_dims(pred, dims, &rank);
+  if (rank != 2) {
+    LOG_ERROR("Cross entropy loss: tensors must be batches of vectors");
+    return;
+  }
+
+  self->value = 0.0;
+  self->pred = pred;
+  self->target = target;
+
+  for (uint32_t b = 0; b < dims[1]; b++) {
+    // calculate soft-max fraction
+    float fraction = 0.0;
+    for (uint32_t i = 0; i < dims[0]; i++) {
+      uint32_t indices[] = {i, b};
+      fraction += expf(*(float*)lida_tensor_get_unchecked(pred, indices));
+    }
+    // calculate the loss
+    for (uint32_t i = 0; i < dims[0]; i++) {
+      uint32_t indices[] = {i, b};
+      float t = *(float*)lida_tensor_get_unchecked(target, indices);
+      float z = *(float*)lida_tensor_get_unchecked(pred, indices);
+      // soft-max
+      float y = expf(z) / fraction;
+      self->value -= t * logf(y);
+    }
+  }
+  // divide by batch size to get average loss
+  self->value /= dims[1];
+}
+
+static struct lida_Tensor*
+Cross_Entropy_Loss_backward(struct lida_Loss* self)
+{
+  uint32_t dims[LIDA_MAX_DIMENSIONALITY];
+  int rank;
+  lida_tensor_get_dims(self->pred, dims, &rank);
+
+  struct lida_Tensor* grad = lida_tensor_create(dims, rank, lida_tensor_get_format(self->pred));
+  for (uint32_t b = 0; b < dims[1]; b++) {
+    // calculate soft-max fraction
+    float fraction = 0.0;
+    for (uint32_t i = 0; i < dims[0]; i++) {
+      uint32_t indices[] = {i, b};
+      fraction += expf(*(float*)lida_tensor_get_unchecked(self->pred, indices));
+    }
+    // calculate the loss
+    for (uint32_t i = 0; i < dims[0]; i++) {
+      uint32_t indices[] = {i, b};
+      float t = *(float*)lida_tensor_get_unchecked(self->target, indices);
+      float z = *(float*)lida_tensor_get_unchecked(self->pred, indices);
+      float* g = lida_tensor_get_unchecked(grad, indices);
+      // soft-max
+      float y = expf(z) / fraction;
+      *g = y - t;
+    }
+  }
+  return grad;
+}
+
 
 /// implementation
 
@@ -490,4 +564,12 @@ lida_MSE_loss(struct lida_Loss* loss)
   loss->udata = NULL;
   loss->forward = MSE_Loss_forward;
   loss->backward = MSE_Loss_backward;
+}
+
+void
+lida_Cross_Entropy_Loss(struct lida_Loss* loss)
+{
+  loss->udata = NULL;
+  loss->forward = Cross_Entropy_Loss_forward;
+  loss->backward = Cross_Entropy_Loss_backward;
 }
